@@ -1,0 +1,106 @@
+Prompt Datta:
+
+{
+  "project_name": "Matriz de Cosecha - Datta",
+  "context": {
+    "general": "Colaboro en un proyecto con la empresa Datta y mi tutor (Dr. Carlos) para construir matrices de cosecha (cohortes × MOB) a partir de datos de créditos.",
+    "data_source": {
+      "etl_owner": "Datta",
+      "etl_access": "No tengo acceso al repositorio ETL ni a las bases de datos.",
+      "official_output": "DataFrame `tape`, exportado también como `Saldo_cosechas_YYYYMMDD.xlsx`.",
+      "ingestion_strategy": "Usar directamente `tape` en memoria; no reingestar Excel."
+    },
+    "tape_description": {
+      "granularity": "Una fila por folio × MOB (longitudinal).",
+      "key_columns": [
+        "folio",
+        "MOB",
+        "Mes-Año",
+        "Fecha de Inicio",
+        "Trimestre"
+      ],
+      "performance_columns": [
+        "pv",
+        "Saldo Capital",
+        "BGI2+",
+        "BGI3+",
+        "BGI4+",
+        "BGI5+",
+        "BGI*_CONTEO",
+        "BGI*_CONTEO_EVER",
+        "BGI4+_MAX"
+      ],
+      "chargeoff_columns": [
+        "CAST_VAL",
+        "CAST_CONTEO",
+        "CAST_VAL_ORI"
+      ]
+    }
+  },
+  "conceptual_definitions": {
+    "PV": "Pagos vencidos. Medida discreta de mora (0–7), no días.",
+    "BGI": "Balance at Given Impairment. Saldo a capital condicionado a un umbral de mora (exposición en riesgo).",
+    "CAST": {
+      "CAST_VAL": "Saldo a capital castigado (persistente después del castigo).",
+      "CAST_CONTEO": "Indicador binario de castigo.",
+      "CAST_VAL_ORI": "Saldo a capital congelado en el MOB exacto del evento de castigo."
+    },
+    "MOB": "Months On Book. Meses desde la originación.",
+    "Cohort": "Agrupación de créditos por mes de originación (Fecha de Inicio)."
+  },
+  "project_objective": {
+    "primary": "Implementar un módulo POO que construya matrices de cosecha (cohorte × MOB) a partir de `tape`.",
+    "secondary": [
+      "Soportar múltiples métricas parametrizables (impago, exposición, castigo, ever delinquency).",
+      "Permitir diferentes salidas: CSV/Parquet, DB, reporte ejecutivo.",
+      "Dejar hooks preparados para filtros demográficos futuros."
+    ]
+  },
+  "design_decisions": {
+    "source_of_truth": "DataFrame `tape` generado por Datta.",
+    "no_recalculation": [
+      "No recalcular PV.",
+      "No recalcular saldos."
+    ],
+    "metric_strategy": "Impago y otras métricas se definen como funciones agregables parametrizables.",
+    "robustness": "Diseño orientado a minimizar retrabajo ante cambios futuros."
+  },
+  "current_status": {
+    "completed": [
+      "Documentación lógica de scripts de Datta.",
+      "Entendimiento completo del diccionario de columnas.",
+      "Alineación conceptual de PV, BGI, CAST, MOB y cohortes."
+    ],
+    "pending": [
+      "Cerrar definiciones de negocio con Datta / Dr. Carlos.",
+      "Diseñar formalmente la clase principal (HarvestMatrixBuilder o equivalente).",
+      "Definir contrato de datos (validaciones sobre `tape`).",
+      "Definir métricas mínimas del release 1."
+    ]
+  },
+  "next_steps": {
+    "immediate": [
+      "Definir qué significa 'impago' para el release 1 (PV≥k, BGI4+_CONTEO, castigo, etc.).",
+      "Diseñar la arquitectura final de la clase principal.",
+      "Especificar contrato de datos y validaciones automáticas.",
+      "Seleccionar 3–5 métricas base para la matriz de cosecha."
+    ],
+    "discussion_points": [
+      "Definición oficial de impago/default.",
+      "Tratamiento de liquidados, prepagos y reestructuras.",
+      "Denominador de tasas (todos vs activos).",
+      "Si el tape mensual contiene historia completa o incremental.",
+      "Métricas prioritarias para dashboards.",
+      "Futuros filtros demográficos y su llave."
+    ]
+  },
+  "request_for_assistant": {
+    "assumptions": "El asistente ya entiende PV, BGI, CAST, MOB, cohorte y no necesita re-explicarlos.",
+    "help_needed": [
+      "Proponer arquitectura final de la clase.",
+      "Definir contrato de datos validable.",
+      "Proponer métricas del release 1.",
+      "Preparar checklist de preguntas para Datta / Dr. Carlos."
+    ]
+  }
+}

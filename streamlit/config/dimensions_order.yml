@@ -1,0 +1,115 @@
+Perfil:
+  - A
+  - B
+  - C
+  - D
+  - E
+  - F
+
+Ciudad Atria:
+  - Cancún
+  - Cdmx
+  - Celaja
+  - Chihuahua
+  - Ciudad Juarez
+  - Guadlajara
+  - Irapuato
+  - León
+  - Merida
+  - Monterrey
+  - Pachuca
+  - Queretaro
+  - Torreón
+
+Plazo:
+  - "12"
+  - "24"
+  - "36"
+  - "48"
+  - "60"
+
+Antiguedad Unidad:
+  - "<4"
+  - "4 a <6"
+  - "6 a <8"
+  - ">=8"
+
+Laboratorios:
+  - W01
+  - W2
+  - W3
+  - Z01
+  - Z02
+  - Z03
+  - Z04
+  - Normal
+
+Notificaciones:
+  - "PE A"
+  - "PE B"
+  - "GG 1"
+  - "GG 2"
+  - "GG 3"
+  - Normal
+
+Atria Plus:
+  - PE
+  - GG
+  - Score
+  - Normal
+
+MMX 6:
+  - MOP1
+  - MOP2
+  - MOP3
+  - MOP4
+  - "MOP5+"
+
+MMX 12:
+  - MOP1
+  - MOP2
+  - MOP3
+  - MOP4
+  - "MOP5+"
+
+MMX 24:
+  - MOP1
+  - MOP2
+  - MOP3
+  - MOP4
+  - "MOP5+"
+
+Cluster Mora:
+  - BGI2+
+  - BGI3+
+  - BGI4+
+  - BGI5+
+  - CAST
+
+Cluster Experiencia:
+  - Exp1
+  - Exp2
+  - Exp3
+  - Exp4
+  - Exp5
+
+Score Buro:
+  - ">0 a <556"
+  - "556 a <613"
+  - "613 a <663"
+  - ">663"
+
+"% Utilizacion Revolvente":
+  - NULL
+  - ">=0 a <0.068"
+  - ">=0.068 a <0.305"
+  - ">=0.305 a <0.621"
+  - ">=0.621663"
+
+Endeudamiento:
+  - NULL
+  - "<0.019"
+  - ">=0.019 a <0.067"
+  - ">=0.067 a <0.171"
+  - ">=0.171 a <0.305"
+  - ">=0.305"
