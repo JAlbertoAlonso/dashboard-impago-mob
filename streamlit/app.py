@@ -217,7 +217,7 @@ def plot_curve_agg_plotly(
             color=ATRIA_PURPLE,
             width=3
         ),
-        hovertemplate="MOB=%{x}<br>%{y:.1f}<extra></extra>",
+        hovertemplate="MOB %{x}<br>%{y:.1f}%<extra></extra>",
     ))
 
     # Curvas externas
@@ -245,7 +245,7 @@ def plot_curve_agg_plotly(
                 mode="lines",
                 name=str(label),
                 line=dict(dash="dash"),
-                hovertemplate="MOB=%{x}<br>%{y:.1f}<extra></extra>",
+                hovertemplate="MOB %{x}<br>%{y:.1f}%<extra></extra>",
             ))
 
     fig.update_layout(
@@ -261,6 +261,14 @@ def plot_curve_agg_plotly(
         xaxis_showgrid=False,
         margin=dict(t=80),
         legend=dict(orientation="h", yanchor="top", y=1.02, xanchor="left", x=0),
+        hoverlabel=dict(
+            bgcolor="rgba(255,255,255,0.98)",
+            bordercolor=ATRIA_PURPLE,
+            font=dict(
+                size=16,
+                color="#1f1f1f"
+            )
+        )
     )
     return fig
 
@@ -309,7 +317,7 @@ def plot_breakdown_curves_plotly(
             y=y_smooth,
             mode="lines",
             name=str(it["label"]),
-            hovertemplate="MOB=%{x}<br>%{y:.1f}<extra></extra>",
+            hovertemplate="MOB %{x}<br>%{y:.1f}%<extra></extra>",
         ))
 
     fig.update_layout(
@@ -331,7 +339,16 @@ def plot_breakdown_curves_plotly(
             xanchor="left",
             x=0
         ),
+        hoverlabel=dict(
+            bgcolor="rgba(255,255,255,0.98)",
+            bordercolor="#783DBE",
+            font=dict(
+                size=16,
+                color="#1f1f1f"
+            )
+        )
     )
+
     return fig
 
 def plot_heatmap_basic(matrix_dt: pd.DataFrame, title: str = "") -> plt.Figure:
@@ -656,7 +673,7 @@ def add_point_labels(ax, x, y, fmt="{:.1f}", dy=0.15):
             va="bottom",
         )
 
-def plot_stacked_composition(agg, bucket_order, breakdown_col, title):
+def plot_stacked_plotly(agg, bucket_order, breakdown_col, title):
     plot_df = agg.copy()
     plot_df[breakdown_col] = plot_df[breakdown_col].astype(str)
 
@@ -683,6 +700,14 @@ def plot_stacked_composition(agg, bucket_order, breakdown_col, title):
         xaxis_title="Cosecha",
         yaxis_title="Participación",
         legend_title=breakdown_col,
+        hoverlabel=dict(
+            bgcolor="rgba(255,255,255,0.98)",
+            bordercolor=ATRIA_PURPLE,
+            font=dict(
+                size=16,
+                color="#1f1f1f"
+            )
+        )
     )
 
     fig.update_xaxes(categoryorder="array", categoryarray=bucket_order)
@@ -828,7 +853,7 @@ def plot_transversal_trends_plotly(
                 hovertemplate=(
                     f"{breakdown_col}: %{{fullData.name}}<br>"
                     "Cosecha: %{x}<br>"
-                    "Tasa: %{y:.2%}<extra></extra>"
+                    "%{y:.2%}<extra></extra>"
                 ),
             )
         )
@@ -841,6 +866,14 @@ def plot_transversal_trends_plotly(
         yaxis_tickformat=".0%",
         legend_title=breakdown_col,
         hovermode="x unified",
+        hoverlabel=dict(
+            bgcolor="rgba(255,255,255,0.98)",
+            bordercolor=ATRIA_PURPLE,
+            font=dict(
+                size=12,
+                color="#1f1f1f"
+            )
+        )
     )
 
     fig.update_xaxes(
@@ -1391,33 +1424,38 @@ if st.session_state.get("last_res") is not None:
         st.divider()
 
         # -------------------------
-        # Curvas externas (hasta 3) - SOLO EXCEL
+        # Curvas externas (hasta 10) - SOLO EXCEL
         # -------------------------
         st.markdown("### Comparación: curvas externas (Excel)")
 
-        help_fmt = (
-            "Sube hasta 3 archivos Excel (.xlsx/.xls).\n\n"
-            "Cada archivo debe tener EXACTAMENTE estas columnas (y en ese orden):\n"
-            "MOB, value\n\n"
-            "Ejemplo:\n"
-            "MOB,value\n"
-            "1,0.2\n"
-            "2,0.3\n"
-            "...\n"
-            "24,16.1\n\n"
-            "Notas:\n"
-            "- MOB debe ser entero.\n"
-            "- value numérico.\n"
-            "- Si hay MOB repetidos, se promedian.\n"
-            f"- Se recorta a MOB <= {mob_max_line}."
-        )
+        help_short = ('Sube hasta 10 archivos Excel con columnas MOB y value.\n\n'
+                     'Debe ser un archivo Excel (`.xlsx` o `.xls`)\n\n'
+                     'Debe contener exactamente estas columnas: `MOB`, `value`\n\n'
+                     '`MOB` debe ser entero\n\n'
+                     '`value` debe ser numérico\n\n'
+                     f'Se recorta a `MOB <= {mob_max_line}`')
+                        
 
         compare_enabled = st.checkbox(
             "Agregar curvas externas",
             value=False,
             key=f"compare_enabled_{epoch}",
-            help=help_fmt,
+            help=help_short,
         )
+
+        if compare_enabled:
+            st.caption(
+                    f"""
+            **Ejemplo de formato requerido por archivo**
+            ```text
+            MOB,value
+            1,0.2
+            2,0.3
+            ...
+            24,16.1
+            ```
+            """
+                )
 
         uploaded_excels = st.file_uploader(
             "Subir Excel(s)",
@@ -1425,14 +1463,14 @@ if st.session_state.get("last_res") is not None:
             accept_multiple_files=True,
             key=f"ext_excels_{epoch}",
             disabled=not compare_enabled,
-            help=help_fmt,
+            help=help_short,
         )
-
+        
         external_curves = []
         if compare_enabled and uploaded_excels:
-            if len(uploaded_excels) > 3:
-                st.warning("Subiste más de 3 archivos. Solo se usarán los primeros 3.")
-                uploaded_excels = uploaded_excels[:3]
+            if len(uploaded_excels) > 10:
+                st.warning("Subiste más de 10 archivos. Solo se usarán los primeros 10.")
+                uploaded_excels = uploaded_excels[:10]
 
             cols = st.columns(len(uploaded_excels))
             for i, up in enumerate(uploaded_excels, start=1):
@@ -1609,7 +1647,7 @@ if st.session_state.get("last_res") is not None:
             # --- Plotly ---
             if stack_render_mode == "Interactivo":
 
-                fig = plot_stacked_composition(
+                fig = plot_stacked_plotly(
                     agg,
                     bucket_order,
                     breakdown_col,
