@@ -454,8 +454,8 @@ def _filters_label(filters_: dict[str, list[str]]) -> str:
         if not val:
             continue
         # compacto: Perfil VIP|STD
-        vv = "-".join([str(x) for x in val[:3]])
-        if len(val) > 3:
+        vv = " ".join([str(x) for x in val[:5]])
+        if len(val) > 5:
             vv += "-..."
         parts.append(f"{col} {vv}")
     return ", ".join(parts)
@@ -677,19 +677,32 @@ def plot_stacked_plotly(agg, bucket_order, breakdown_col, title):
     plot_df = agg.copy()
     plot_df[breakdown_col] = plot_df[breakdown_col].astype(str)
 
-    levels = list(pd.Index(plot_df[breakdown_col].dropna().unique()))
+    pivot = plot_df.pivot_table(
+        index="bucket",
+        columns=breakdown_col,
+        values="pct",
+        fill_value=0
+    )
+
+    pivot = pivot.reindex(bucket_order, fill_value=0)
+
+    levels = list(pivot.columns)
     colors = atria_purple_scale(len(levels))
     color_map = {lvl: colors[i] for i, lvl in enumerate(levels)}
 
     fig = go.Figure()
 
     for lvl in levels:
-        sub = plot_df[plot_df[breakdown_col] == lvl]
         fig.add_bar(
-            x=sub["bucket"],
-            y=sub["pct"],
+            x=pivot.index.tolist(),
+            y=pivot[lvl].tolist(),
             name=lvl,
             marker_color=color_map[lvl],
+            hovertemplate=(
+                f"{breakdown_col}: {lvl}<br>"
+                "Cosecha: %{x}<br>"
+                "Participación: %{y:.1%}<extra></extra>"
+            ),
         )
 
     fig.update_layout(
@@ -710,11 +723,17 @@ def plot_stacked_plotly(agg, bucket_order, breakdown_col, title):
         )
     )
 
-    fig.update_xaxes(categoryorder="array", categoryarray=bucket_order)
+    fig.update_xaxes(
+        type="category",
+        categoryorder="array",
+        categoryarray=bucket_order,
+        tickangle=315
+    )
 
     return fig
 
 def plot_stacked_matplotlib(agg, bucket_order, breakdown_col, title):
+
     plot_df = agg.copy()
     plot_df[breakdown_col] = plot_df[breakdown_col].astype(str)
 
@@ -769,8 +788,10 @@ def plot_stacked_matplotlib(agg, bucket_order, breakdown_col, title):
     ax.set_ylabel("Participación")
     ax.set_xlabel("Cosecha")
     ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+    ax.tick_params(axis="x", labelrotation=45)
 
     plt.tight_layout()
+
     return fig
 
 def hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
@@ -814,6 +835,22 @@ def plot_transversal_trends_plotly(
     plot_df = df_plot.copy()
     plot_df[breakdown_col] = plot_df[breakdown_col].astype(str)
 
+    # -----------------------------
+    # Normalización de buckets a YYYY-MM si son fecha
+    # -----------------------------
+    bucket_order_raw = list(bucket_order)
+
+    parsed_order = pd.to_datetime(bucket_order_raw, errors="coerce")
+    if pd.notna(parsed_order).all():
+        bucket_order_fmt = [d.strftime("%Y-%m") for d in parsed_order]
+        bucket_map = {
+            str(raw): fmt for raw, fmt in zip(bucket_order_raw, bucket_order_fmt)
+        }
+        plot_df["bucket"] = plot_df["bucket"].astype(str).map(bucket_map).fillna(plot_df["bucket"].astype(str))
+    else:
+        bucket_order_fmt = [str(x) for x in bucket_order_raw]
+        plot_df["bucket"] = plot_df["bucket"].astype(str)
+
     levels = list(pd.Index(plot_df[breakdown_col].dropna().unique()))
     levels_wo_total = [lvl for lvl in levels if lvl != "Total"]
     levels_final = levels_wo_total + (["Total"] if "Total" in levels else [])
@@ -836,7 +873,11 @@ def plot_transversal_trends_plotly(
 
     for lvl in levels_final:
         sub = plot_df[plot_df[breakdown_col] == lvl].copy()
-        sub["bucket"] = pd.Categorical(sub["bucket"], categories=bucket_order, ordered=True)
+        sub["bucket"] = pd.Categorical(
+            sub["bucket"],
+            categories=bucket_order_fmt,
+            ordered=True
+        )
         sub = sub.sort_values("bucket")
 
         fig.add_trace(
@@ -844,7 +885,7 @@ def plot_transversal_trends_plotly(
                 x=sub["bucket"],
                 y=sub["pct"],
                 mode="lines",
-                name=lvl,
+                name=str(lvl),
                 line=dict(
                     width=3 if lvl == "Total" else 2,
                     color=color_map[lvl],
@@ -877,8 +918,10 @@ def plot_transversal_trends_plotly(
     )
 
     fig.update_xaxes(
+        type="category",
         categoryorder="array",
-        categoryarray=bucket_order
+        categoryarray=bucket_order_fmt,
+        tickangle=315
     )
 
     return fig
@@ -895,6 +938,22 @@ def plot_transversal_trends_matplotlib(
     plot_df = df_plot.copy()
     plot_df[breakdown_col] = plot_df[breakdown_col].astype(str)
 
+    # -----------------------------
+    # Normalización de buckets a YYYY-MM si son fecha
+    # -----------------------------
+    bucket_order_raw = list(bucket_order)
+
+    parsed_order = pd.to_datetime(bucket_order_raw, errors="coerce")
+    if pd.notna(parsed_order).all():
+        bucket_order_fmt = [d.strftime("%Y-%m") for d in parsed_order]
+        bucket_map = {
+            str(raw): fmt for raw, fmt in zip(bucket_order_raw, bucket_order_fmt)
+        }
+        plot_df["bucket"] = plot_df["bucket"].astype(str).map(bucket_map).fillna(plot_df["bucket"].astype(str))
+    else:
+        bucket_order_fmt = [str(x) for x in bucket_order_raw]
+        plot_df["bucket"] = plot_df["bucket"].astype(str)
+
     pivot = plot_df.pivot_table(
         index="bucket",
         columns=breakdown_col,
@@ -902,7 +961,7 @@ def plot_transversal_trends_matplotlib(
         fill_value=np.nan
     )
 
-    pivot = pivot.reindex(bucket_order)
+    pivot = pivot.reindex(bucket_order_fmt)
 
     fig, ax = plt.subplots(figsize=(12, 6))
 
@@ -948,7 +1007,7 @@ def plot_transversal_trends_matplotlib(
 
                 txt = ax.text(
                     xi,
-                    yi + 0.002,   # pequeño offset vertical
+                    yi + 0.002,
                     f"{float(yi):.1%}",
                     fontsize=8,
                     ha="center",
@@ -961,7 +1020,7 @@ def plot_transversal_trends_matplotlib(
                 ])
 
     ax.set_xticks(x)
-    ax.set_xticklabels(x_labels)
+    ax.set_xticklabels(x_labels, rotation=45, ha="right")
 
     ax.set_xlabel("Cosecha")
     ax.set_ylabel(build_y_label(tipo_mora, metric_mode_))
@@ -1341,7 +1400,7 @@ if st.session_state.get("last_res") is not None:
         castigo_enabled_=bool(castigo_enabled),
         mob_max_=mob_max_line,
         breakdown_col_=breakdown_col,   
-        include_detail_=True,           
+        include_detail_=False,           
     )
 
     file_stub_table = slug_filename(title_table)
@@ -1526,8 +1585,9 @@ if st.session_state.get("last_res") is not None:
             )
             st.plotly_chart(fig_line, width="stretch")
 
+        # Matplotlib con etiquetas
         else:
-            # Matplotlib con etiquetas
+            
             fig_line = plot_curve_agg(
                 curve_view,
                 metric_mode,
@@ -1625,134 +1685,141 @@ if st.session_state.get("last_res") is not None:
 
             st.divider()
 
+            # =========================================================
+            # Barras apiladas + Tendencias transversales lado a lado
+            # =========================================================
+            col_stack, col_trans = st.columns([1, 1.15])
 
-            # -------------------------
-            # Barras Apiladas
-            # -------------------------
+            # ----------------------------------------------
+            # COLUMNA IZQUIERDA: Barras apiladas
+            # ----------------------------------------------
+            with col_stack:
+                st.markdown("### Composición de originación")
 
-            stack_render_mode = st.radio(
-                "Modo de gráfica",
-                ["Interactivo", "Con etiquetas"],
-                key=f"stack_render_ui_{epoch}"
-            )
-
-            agg, bucket_order = engine.compute_breakdown_composition(
-                sc,
-                breakdown_col,
-                freq_mode,
-                value_mode,
-                n_cosechas
-            )
-
-            # --- Plotly ---
-            if stack_render_mode == "Interactivo":
-
-                fig = plot_stacked_plotly(
-                    agg,
-                    bucket_order,
-                    breakdown_col,
-                    title_line_detalle
+                stack_render_mode = st.radio(
+                    "Modo de gráfica",
+                    ["Interactivo", "Con etiquetas"],
+                    key=f"stack_render_ui_{epoch}"
                 )
 
-                st.plotly_chart(fig, width="stretch")
-
-                file_bytes = fig.to_html().encode()
-                filename = f"{file_stub_det}_barras_apiladas.html"
-                mime = "text/html"
-
-            # --- Matplotlib ---
-            else:
-
-                fig = plot_stacked_matplotlib(
-                    agg,
-                    bucket_order,
+                agg, bucket_order = engine.compute_breakdown_composition(
+                    sc,
                     breakdown_col,
-                    title_line_detalle
+                    freq_mode,
+                    value_mode,
+                    n_cosechas
                 )
 
-                st.pyplot(fig)
+                # --- Plotly ---
+                if stack_render_mode == "Interactivo":
 
-                file_bytes = fig_to_png_bytes(fig)
-                filename = f"{file_stub_det}_barras_apiladas.png"
-                mime = "image/png"
+                    fig = plot_stacked_plotly(
+                        agg,
+                        bucket_order,
+                        breakdown_col,
+                        title_line_detalle
+                    )
 
-            st.download_button(
-                "Descargar gráfica PNG",
-                data=file_bytes,
-                file_name=filename,
-                mime=mime
-            )
+                    st.plotly_chart(fig, width="stretch")
 
-            st.divider()
+                    file_bytes = fig.to_html().encode()
+                    filename = f"{file_stub_det}_barras_apiladas.html"
+                    mime = "text/html"
 
-            
-            # -------------------------
-            # Tendencias transversales
-            # -------------------------
+                # --- Matplotlib ---
+                else:
 
-            trans_render_mode = st.radio(
-                "Modo de gráfica",
-                ["Interactivo", "Con etiquetas %"],
-                index=0,
-                horizontal=True,
-                key=f"trans_render_mode_ui_{epoch}",
-            )
+                    fig = plot_stacked_matplotlib(
+                        agg,
+                        bucket_order,
+                        breakdown_col,
+                        title_line_detalle
+                    )
 
-            trans_df, trans_bucket_order = engine.compute_breakdown_transversal_trends(
-                scenario=sc,
-                breakdown_col=breakdown_col,
-                mob_fix=trans_mob_fix,
-                freq_mode=trans_freq_mode,
-                n_cosechas=trans_n_cosechas,
-            )
+                    st.pyplot(fig)
 
-            trans_title = f"{title_line_detalle}, MOB {trans_mob_fix} fijo"
+                    file_bytes = fig_to_png_bytes(fig)
+                    filename = f"{file_stub_det}_barras_apiladas.png"
+                    mime = "image/png"
 
-            # --- Plotly ---
-            if trans_render_mode == "Interactivo":
-
-                fig = plot_transversal_trends_plotly(
-                    trans_df,
-                    trans_bucket_order,
-                    breakdown_col,
-                    trans_title,
-                    tipo_mora=sc.tipo_mora,
-                    metric_mode_=sc.metric_mode,
+                st.download_button(
+                    "Descargar gráfica",
+                    data=file_bytes,
+                    file_name=filename,
+                    mime=mime,
+                    key=f"download_stack_{epoch}",
+                    use_container_width=True,
                 )
 
-                st.plotly_chart(fig, width='stretch')
+            # ----------------------------------------------
+            # COLUMNA DERECHA: Tendencias transversales
+            # ----------------------------------------------
+            with col_trans:
+                st.markdown("### Tendencias transversales")
 
-                file_bytes = fig.to_html().encode()
-                filename = f"{file_stub_det}_tendencias_transversales.html"
-                mime = "text/html"
-
-
-            # --- Matplotlib ---
-            else:
-
-                fig = plot_transversal_trends_matplotlib(
-                    trans_df,
-                    trans_bucket_order,
-                    breakdown_col,
-                    trans_title,
-                    tipo_mora=sc.tipo_mora,
-                    metric_mode_=sc.metric_mode,
-                    show_point_labels=True,
+                trans_render_mode = st.radio(
+                    "Modo de gráfica",
+                    ["Interactivo", "Con etiquetas %"],
+                    index=0,
+                    horizontal=True,
+                    key=f"trans_render_mode_ui_{epoch}",
                 )
 
-                st.pyplot(fig)
+                trans_df, trans_bucket_order = engine.compute_breakdown_transversal_trends(
+                    scenario=sc,
+                    breakdown_col=breakdown_col,
+                    mob_fix=trans_mob_fix,
+                    freq_mode=trans_freq_mode,
+                    n_cosechas=trans_n_cosechas,
+                )
 
-                file_bytes = fig_to_png_bytes(fig)
-                filename = f"{file_stub_det}_tendencias_transversales.png"
-                mime = "image/png"
+                trans_title = f"{title_line_detalle}, MOB {trans_mob_fix} fijo"
 
-            st.download_button(
-                "Descargar gráfica",
-                data=file_bytes,
-                file_name=filename,
-                mime=mime,
-                key=f"download_transversal_{epoch}",
-            )
+                # --- Plotly ---
+                if trans_render_mode == "Interactivo":
+
+                    fig = plot_transversal_trends_plotly(
+                        trans_df,
+                        trans_bucket_order,
+                        breakdown_col,
+                        trans_title,
+                        tipo_mora=sc.tipo_mora,
+                        metric_mode_=sc.metric_mode,
+                    )
+
+                    st.plotly_chart(fig, width="stretch")
+
+                    file_bytes = fig.to_html().encode()
+                    filename = f"{file_stub_det}_tendencias_transversales.html"
+                    mime = "text/html"
+
+                # --- Matplotlib ---
+                else:
+
+                    fig = plot_transversal_trends_matplotlib(
+                        trans_df,
+                        trans_bucket_order,
+                        breakdown_col,
+                        trans_title,
+                        tipo_mora=sc.tipo_mora,
+                        metric_mode_=sc.metric_mode,
+                        show_point_labels=True,
+                    )
+
+                    st.pyplot(fig)
+
+                    file_bytes = fig_to_png_bytes(fig)
+                    filename = f"{file_stub_det}_tendencias_transversales.png"
+                    mime = "image/png"
+
+                st.download_button(
+                    "Descargar gráfica",
+                    data=file_bytes,
+                    file_name=filename,
+                    mime=mime,
+                    key=f"download_transversal_{epoch}",
+                    use_container_width=True,
+                )
 
 else:
     st.info("Configura el escenario en el panel izquierdo y presiona **Run scenario**.")
