@@ -686,6 +686,10 @@ def plot_stacked_plotly(agg, bucket_order, breakdown_col, title):
 
     pivot = pivot.reindex(bucket_order, fill_value=0)
 
+    # Defensivo si hay probelma en los buckets
+    row_sums = pivot.sum(axis=1).replace(0, np.nan)
+    pivot = pivot.div(row_sums, axis=0).fillna(0)
+
     levels = list(pivot.columns)
     colors = atria_purple_scale(len(levels))
     color_map = {lvl: colors[i] for i, lvl in enumerate(levels)}
@@ -746,7 +750,7 @@ def plot_stacked_matplotlib(agg, bucket_order, breakdown_col, title):
 
     pivot = pivot.reindex(bucket_order)
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    fig, ax = plt.subplots(figsize=(12, 12))
     bottom = np.zeros(len(pivot))
 
     colors = atria_purple_scale(len(pivot.columns))
@@ -773,7 +777,7 @@ def plot_stacked_matplotlib(agg, bucket_order, breakdown_col, title):
                     f"{v:.0%}",
                     ha="center",
                     va="center",
-                    fontsize=8,
+                    fontsize=12,
                     color="black",
                     clip_on=True
                 )
@@ -836,19 +840,32 @@ def plot_transversal_trends_plotly(
     plot_df[breakdown_col] = plot_df[breakdown_col].astype(str)
 
     # -----------------------------
-    # Normalización de buckets a YYYY-MM si son fecha
+    # Normalización de buckets:
+    # - si vienen en formato YYYY-MM -> se normalizan a YYYY-MM
+    # - si vienen trimestrales (YYYY_I, YYYY_II, ...) -> se dejan tal cual
     # -----------------------------
-    bucket_order_raw = list(bucket_order)
+    bucket_order_raw = [str(x) for x in bucket_order]
 
-    parsed_order = pd.to_datetime(bucket_order_raw, errors="coerce")
-    if pd.notna(parsed_order).all():
+    monthly_pattern = re.compile(r"^\d{4}-\d{2}$")
+
+    is_monthly_bucket = all(monthly_pattern.match(x) for x in bucket_order_raw)
+
+    if is_monthly_bucket:
+        parsed_order = pd.to_datetime(bucket_order_raw, format="%Y-%m", errors="coerce")
         bucket_order_fmt = [d.strftime("%Y-%m") for d in parsed_order]
+
         bucket_map = {
-            str(raw): fmt for raw, fmt in zip(bucket_order_raw, bucket_order_fmt)
+            raw: fmt for raw, fmt in zip(bucket_order_raw, bucket_order_fmt)
         }
-        plot_df["bucket"] = plot_df["bucket"].astype(str).map(bucket_map).fillna(plot_df["bucket"].astype(str))
+
+        plot_df["bucket"] = (
+            plot_df["bucket"]
+            .astype(str)
+            .map(bucket_map)
+            .fillna(plot_df["bucket"].astype(str))
+        )
     else:
-        bucket_order_fmt = [str(x) for x in bucket_order_raw]
+        bucket_order_fmt = bucket_order_raw
         plot_df["bucket"] = plot_df["bucket"].astype(str)
 
     levels = list(pd.Index(plot_df[breakdown_col].dropna().unique()))
@@ -963,7 +980,7 @@ def plot_transversal_trends_matplotlib(
 
     pivot = pivot.reindex(bucket_order_fmt)
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    fig, ax = plt.subplots(figsize=(12, 10))
 
     # Colores default tipo Plotly
     default_colors = [
@@ -1194,6 +1211,44 @@ mob_max_line_ui = st.sidebar.slider(
 st.sidebar.divider()
 
 
+# ------------------------------------------
+# Default dinámico para breakdown_col
+# ------------------------------------------
+breakdown_options = ["(Ninguno)"] + available_cols
+
+# Antes de run scenario
+if len(selected_filter_cols) == 0:
+    default_breakdown_ui = "(Ninguno)"
+
+# Toma la primera dimensión elegida para filtrar
+else:
+    default_breakdown_ui = selected_filter_cols[0]
+
+# Si por alguna razón no está en opciones, cae a "(Ninguno)"
+if default_breakdown_ui not in breakdown_options:
+    default_breakdown_ui = "(Ninguno)"
+
+# Clave auxiliar para recordar la última configuración de filtros
+key_break_sync = f"{key_break}_last_filter_cols"
+
+current_filter_signature = tuple(selected_filter_cols)
+last_filter_signature = st.session_state.get(key_break_sync)
+
+# Empujar el valor por default al widget SOLO si:
+# 1. el widget aún no tiene valor
+# 2. el valor actual ya no es válido
+# 3. cambió la lista de dimensiones filtradas
+current_break_val = st.session_state.get(key_break)
+
+if (
+    current_break_val is None
+    or current_break_val not in breakdown_options
+    or current_filter_signature != last_filter_signature
+    ):
+    st.session_state[key_break] = default_breakdown_ui
+    st.session_state[key_break_sync] = current_filter_signature
+
+
 # =============================
 # Detalles Gráficos
 # =============================
@@ -1201,12 +1256,11 @@ st.sidebar.header("Escenario / Detalle gráfico")
 
 breakdown_col = st.sidebar.selectbox(
     "Dimensión de detalle",
-    options=["(ninguno)"] + available_cols,
-    index=0,
+    options=breakdown_options,
     key=key_break,
 )
 
-breakdown_col = None if breakdown_col == "(ninguno)" else breakdown_col
+breakdown_col = None if breakdown_col == "(Ninguno)" else breakdown_col
 
 min_folios_breakdown = st.sidebar.number_input(
     "# Mínimo de folios",
@@ -1407,13 +1461,28 @@ if st.session_state.get("last_res") is not None:
     file_stub_line  = slug_filename(title_line_cosechas)
     file_stub_det   = slug_filename(title_line_detalle)
 
-    tab_matriz, tab_break = st.tabs(
-        ["Cosechas", "Detalle de gráfico"]
+
+    # =========================================================
+    # Navegación principal persistente
+    # =========================================================
+    if "main_view" not in st.session_state:
+        st.session_state.main_view = "Cosechas"
+
+    selected_view = st.segmented_control(
+        "Vista principal",
+        options=["Cosechas", "Detalle gráfico"],
+        key="main_view",
+        label_visibility="collapsed"
     )
 
+    st.divider()
 
-    # ---- TAB 1: Matriz + heatmap + lineplot
-    with tab_matriz:
+
+    # =========================================================
+    # Vista: Cosechas
+    # =========================================================
+    if selected_view == "Cosechas":
+
         st.subheader(title_table)
 
         # -------------------------
@@ -1494,7 +1563,7 @@ if st.session_state.get("last_res") is not None:
                      '`value` debe ser numérico\n\n'
                      f'Se recorta a `MOB <= {mob_max_line}`')
                         
-
+        # Ingreso de gráficas por usuario
         compare_enabled = st.checkbox(
             "Agregar curvas externas",
             value=False,
@@ -1574,6 +1643,7 @@ if st.session_state.get("last_res") is not None:
 
         use_plotly_tab1 = (render_mode_tab1 == "Interactivo")
 
+        # --- Plotly ---
         if use_plotly_tab1:
             fig_line = plot_curve_agg_plotly(
                 curve_view,
@@ -1607,10 +1677,16 @@ if st.session_state.get("last_res") is not None:
         )
 
 
-    # ---- TAB 2: Detalle de gráfico
-    with tab_break:
+    # =========================================================
+    # Vista: Detalle gráfico
+    # =========================================================
+    elif selected_view == "Detalle gráfico":
+
+        # Spinner
         if breakdown_col is None:
             st.info("Selecciona una columna en 'Detalle de gráfico' para ver curvas por nivel.")
+
+        # Renders
         else:
 
             # -------------------------
@@ -1821,5 +1897,6 @@ if st.session_state.get("last_res") is not None:
                     use_container_width=True,
                 )
 
+# Spinner
 else:
     st.info("Configura el escenario en el panel izquierdo y presiona **Run scenario**.")

@@ -337,21 +337,35 @@ class ImpagoOnDemandEngine:
 
         df = self.get_originacion_base(scenario, breakdown_col)
 
+        # -------------------------------------
+        # Seleccionar últimas N cosechas base
+        # -------------------------------------
+        cosechas_base = (
+            pd.to_datetime(df["cosecha"])
+            .drop_duplicates()
+            .sort_values()
+        )
+
+        last_cosechas = cosechas_base[-n_cosechas:]
+        last_cosechas_str = set(last_cosechas.dt.strftime("%Y-%m"))
+
+        df = df[df["cosecha"].astype(str).isin(last_cosechas_str)].copy()
+
         # -------------------------
         # Construir bucket temporal
         # -------------------------
 
         if freq_mode == "Mensual":
 
-            df["bucket"] = df["cosecha"]
+            df["bucket"] = df["cosecha"].astype(str)
 
-            order_df = (
-                pd.to_datetime(df["cosecha"])
+            bucket_order = (
+                pd.to_datetime(df["bucket"])
                 .drop_duplicates()
                 .sort_values()
+                .dt.strftime("%Y-%m")
+                .tolist()
             )
-
-            bucket_order = list(order_df.dt.strftime("%Y-%m"))
 
         else:
             dt = pd.to_datetime(df["cosecha"])
@@ -361,24 +375,24 @@ class ImpagoOnDemandEngine:
 
             df["bucket"] = dt.dt.year.astype(str) + "_" + q_roman
 
-            order_df = (
+            bucket_order = (
                 pd.DataFrame({
                     "dt": dt,
                     "bucket": df["bucket"]
                 })
-                .drop_duplicates()
-                .sort_values("dt")
+                .groupby("bucket", as_index=False)["dt"]
+                .min()
+                .sort_values("dt")["bucket"]
+                .tolist()
             )
-
-            bucket_order = order_df["bucket"].tolist()
 
         # -------------------------
         # Seleccionar últimas N
         # -------------------------
 
-        last_buckets = bucket_order[-n_cosechas:]
+        # last_buckets = bucket_order[-n_cosechas:]
 
-        df = df[df["bucket"].isin(last_buckets)]
+        # df = df[df["bucket"].isin(last_buckets)]
 
         # -------------------------
         # Agregación
@@ -410,8 +424,7 @@ class ImpagoOnDemandEngine:
             .reset_index(name="total")
         )
 
-        agg = agg.merge(totals)
-
+        agg = agg.merge(totals, on="bucket", how="left")
         agg["pct"] = agg["value"] / agg["total"]
 
         # -------------------------
@@ -430,7 +443,7 @@ class ImpagoOnDemandEngine:
 
         agg = pd.concat([agg, total], ignore_index=True)
 
-        bucket_order = last_buckets + ["Total"]
+        bucket_order = bucket_order + ["Total"]
 
         return agg, bucket_order
 
