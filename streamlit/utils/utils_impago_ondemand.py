@@ -199,7 +199,6 @@ class ImpagoOnDemandEngine:
         self.castigo_col = castigo_col
         self.castigo_exclude_values = castigo_exclude_values or ["Fraude", "Otros"]
         self.castigo_strict = self.strict_filters if castigo_strict is None else castigo_strict
-        # --- legend order map (YAML)
         if legend_order_path is None:
             default_path = Path(__file__).resolve().parents[1] / "config" / "dimensions_order.yml"
         else:
@@ -212,7 +211,10 @@ class ImpagoOnDemandEngine:
 
         self._validate_min_contract()
 
+
+    # -----------------------------
     # Para debug
+    # -----------------------------
     def _log(self, msg: str, *, debug: Optional[bool] = None) -> None:
         """
         Logger simple controlado por bandera debug.
@@ -224,9 +226,9 @@ class ImpagoOnDemandEngine:
             print(msg)
 
 
-    # -----------------------------
-    # Contract / validation
-    # -----------------------------
+    # ========================================
+    # Validación de datos
+    # ========================================
     def _validate_min_contract(self) -> None:
         required = {self.folio_col, self.mob_col, self.cohorte_col, self.monto_col}
         missing = sorted(required - set(self.df.columns))
@@ -241,9 +243,9 @@ class ImpagoOnDemandEngine:
         return f"{tipo_mora}_CONTEO_EVER"
 
 
-    # -----------------------------
-    # Filters
-    # -----------------------------
+    # ========================================
+    # Aplicación de filtros de escenario
+    # ========================================
     def apply_filters(self, df: pd.DataFrame, filters: Optional[FilterDict]) -> pd.DataFrame:
         """
         Aplica filtros tipo: {"Ciudad Atria": ["CDMX", "Monterrey"]}
@@ -613,9 +615,9 @@ class ImpagoOnDemandEngine:
         return out, bucket_order
 
 
-    # -----------------------------
-    # Core computations
-    # -----------------------------
+    # ========================================
+    # Core computaciones
+    # ========================================
     def compute_matrix(
         self,
         df_filtered: pd.DataFrame,
@@ -976,9 +978,9 @@ class ImpagoOnDemandEngine:
         return curves
 
 
-    # -----------------------------
+    # ========================================
     # Plotters
-    # -----------------------------
+    # ========================================
     @staticmethod
     def plot_curve_by_mob(curve_df: pd.DataFrame, *, mob_col: str, y_col: str, title: str, show: bool = True):
         ATRIA_PURPLE = "#7A3EB1"
@@ -1292,9 +1294,9 @@ class ImpagoOnDemandEngine:
         return fig
 
 
-    # -----------------------------
+    # ========================================
     # IO helpers
-    # -----------------------------
+    # ========================================
     @staticmethod
     def sanitize_name(name: str) -> str:
         """
@@ -1508,9 +1510,9 @@ class ImpagoOnDemandEngine:
         return out
 
 
-    # -----------------------------
-    # Scenario runners
-    # -----------------------------
+    # ========================================
+    # Para correr escenarios
+    # ========================================
     def run_scenario(
         self,
         scenario: Scenario,
