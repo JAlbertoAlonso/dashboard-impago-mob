@@ -1,5 +1,5 @@
 # app.py
-# Demo Streamlit v0 – Matriz de Impago On-Demand (Datta)
+# Demo Streamlit – Matriz de Impago On-Demand (Datta)
 # - Filtros dinámicos N (seleccionas columnas, luego valores)
 # - Curva agregada por MOB
 # - Matriz display grande
@@ -28,9 +28,9 @@ from data.data import load_data
 ATRIA_PURPLE = "#783DBE"
 
 
-# -----------------------------
+# =================================
 # Helpers de plots
-# -----------------------------
+# =================================
 
 def fig_to_png_bytes(fig: plt.Figure, dpi: int = 200) -> bytes:
     buf = io.BytesIO()
@@ -1061,9 +1061,9 @@ def plot_transversal_trends_matplotlib(
     return fig
 
 
-# -----------------------------
+# =================================
 # Panel de Configuración
-# -----------------------------
+# =================================
 st.set_page_config(page_title="Demo Matriz de Impago", layout="wide")
 
 # -----------------------------
@@ -1102,9 +1102,10 @@ if "reset_epoch" not in st.session_state:
 # -----------------------------
 epoch = st.session_state["reset_epoch"]
 
-# =============================
-# Configuración general
-# =============================
+
+# =================================
+# Sidebar / Configuración general
+# =================================
 st.sidebar.header("Escenario / Cosechas")
 tipo_mora = st.sidebar.selectbox(
     "Tipo mora",
@@ -1169,9 +1170,9 @@ for col in selected_filter_cols:
     if sel:
         filters[col] = sel
 
-# =============================
+# -----------------------------
 # Cap MOB (común)
-# =============================
+# -----------------------------
 mob_max_cap = int(pd.to_numeric(df["MOB"], errors="coerce").max())
 
 key_heat = f"show_heatmap_ui_{epoch}"
@@ -1211,9 +1212,9 @@ mob_max_line_ui = st.sidebar.slider(
 st.sidebar.divider()
 
 
-# ------------------------------------------
+# ******************************************
 # Default dinámico para breakdown_col
-# ------------------------------------------
+# ******************************************
 breakdown_options = ["(Ninguno)"] + available_cols
 
 # Antes de run scenario
@@ -1249,9 +1250,9 @@ if (
     st.session_state[key_break_sync] = current_filter_signature
 
 
-# =============================
-# Detalles Gráficos
-# =============================
+# =================================
+# Sidebar / Detalles gráfico
+# =================================
 st.sidebar.header("Escenario / Detalle gráfico")
 
 breakdown_col = st.sidebar.selectbox(
@@ -1335,10 +1336,14 @@ mob_max_line_ui = int(st.session_state.get(key_mob_line, min(24, mob_max_cap)))
 # Botones
 # =============================
 
+# -----------------------------
 # Botón Run
+# -----------------------------
 run = st.sidebar.button("Run scenario", type="primary")
 
+# -----------------------------
 # Botón de Reset
+# -----------------------------
 def request_reset():
     old = st.session_state["reset_epoch"]
     # borra keys del epoch viejo
@@ -1364,10 +1369,10 @@ st.sidebar.button(
 )
 
 
-# ---------------------------------------------------------
+# *********************************************************
 # Ejecución
-# 1) RUN: solo corre el engine y guarda resultados/inputs
-# ---------------------------------------------------------
+# 1) RUN -> corre el escenario y guarda resultados/inputs
+# *********************************************************
 if run:
     sc = Scenario(
         name="streamlit_demo_v1",
@@ -1393,9 +1398,9 @@ if run:
 
     st.success("Listo")
 
-# ---------------------------------------------------------
-# 2) RENDER: si ya existe resultado previo
-# ---------------------------------------------------------
+# *********************************************************
+# 2) RENDER -> si ya existe resultado previo
+# *********************************************************
 if st.session_state.get("last_res") is not None:
     res = st.session_state["last_res"]
     sc = st.session_state["last_sc"]
@@ -1897,6 +1902,9 @@ if st.session_state.get("last_res") is not None:
                     use_container_width=True,
                 )
 
+
+# -----------------------------
 # Spinner
+# -----------------------------
 else:
     st.info("Configura el escenario en el panel izquierdo y presiona **Run scenario**.")
