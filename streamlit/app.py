@@ -690,9 +690,22 @@ def plot_stacked_plotly(agg, bucket_order, breakdown_col, title):
     row_sums = pivot.sum(axis=1).replace(0, np.nan)
     pivot = pivot.div(row_sums, axis=0).fillna(0)
 
-    levels = list(pivot.columns)
-    colors = atria_purple_scale(len(levels))
-    color_map = {lvl: colors[i] for i, lvl in enumerate(levels)}
+    # levels = list(pivot.columns)
+    levels = sorted(pivot.columns)
+    colors = [
+        "#783DBE",
+        "#5B8FF9",
+        "#61DDAA",
+        "#65789B",
+        "#F6BD16",
+        "#7262FD",
+        "#78D3F8",
+        "#9661BC",
+        "#F6903D",
+        "#008685",
+    ]
+    
+    color_map = {lvl: colors[i % len(colors)] for i, lvl in enumerate(levels)}
 
     fig = go.Figure()
 
@@ -716,7 +729,10 @@ def plot_stacked_plotly(agg, bucket_order, breakdown_col, title):
         yaxis_tickformat=".0%",
         xaxis_title="Cosecha",
         yaxis_title="Participación",
-        legend_title=breakdown_col,
+        legend=dict(
+            title=breakdown_col,
+            traceorder="normal"
+        ),
         hoverlabel=dict(
             bgcolor="rgba(255,255,255,0.98)",
             bordercolor=ATRIA_PURPLE,
@@ -753,7 +769,19 @@ def plot_stacked_matplotlib(agg, bucket_order, breakdown_col, title):
     fig, ax = plt.subplots(figsize=(12, 12))
     bottom = np.zeros(len(pivot))
 
-    colors = atria_purple_scale(len(pivot.columns))
+    # colors = atria_purple_scale(len(pivot.columns))
+    colors = [
+        "#783DBE",
+        "#5B8FF9",
+        "#61DDAA",
+        "#65789B",
+        "#F6BD16",
+        "#7262FD",
+        "#78D3F8",
+        "#9661BC",
+        "#F6903D",
+        "#008685",
+    ]
 
     for i, col in enumerate(pivot.columns):
         values = pivot[col].values
@@ -762,7 +790,7 @@ def plot_stacked_matplotlib(agg, bucket_order, breakdown_col, title):
             pivot.index,
             values,
             bottom=bottom,
-            color=colors[i],
+            color=colors[i % len(colors)],
             label=col
         )
 
@@ -872,13 +900,21 @@ def plot_transversal_trends_plotly(
     levels_wo_total = [lvl for lvl in levels if lvl != "Total"]
     levels_final = levels_wo_total + (["Total"] if "Total" in levels else [])
 
-    # colores default de Plotly
-    default_colors = [
-        "#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A",
-        "#19D3F3", "#FF6692", "#B6E880", "#FF97FF", "#FECB52"
+    # colores de Plotly
+    colors = [
+        "#783DBE",
+        "#5B8FF9",
+        "#61DDAA",
+        "#65789B",
+        "#F6BD16",
+        "#7262FD",
+        "#78D3F8",
+        "#9661BC",
+        "#F6903D",
+        "#008685",
     ]
     color_map = {
-        lvl: default_colors[i % len(default_colors)]
+        lvl: colors[i % len(colors)]
         for i, lvl in enumerate(levels_wo_total)
     }
 
@@ -983,16 +1019,24 @@ def plot_transversal_trends_matplotlib(
     fig, ax = plt.subplots(figsize=(12, 10))
 
     # Colores default tipo Plotly
-    default_colors = [
-        "#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A",
-        "#19D3F3", "#FF6692", "#B6E880", "#FF97FF", "#FECB52"
+    colors = [
+        "#783DBE",
+        "#5B8FF9",
+        "#61DDAA",
+        "#65789B",
+        "#F6BD16",
+        "#7262FD",
+        "#78D3F8",
+        "#9661BC",
+        "#F6903D",
+        "#008685",
     ]
 
     cols = list(pivot.columns)
     cols_wo_total = [c for c in cols if c != "Total"]
 
     color_map = {
-        col: default_colors[i % len(default_colors)]
+        col: colors[i % len(colors)]
         for i, col in enumerate(cols_wo_total)
     }
 
@@ -1142,7 +1186,22 @@ FILTERABLE_COLS = [
     "Score generico de bancos", "Score Buro",
 ]
 
-available_cols = [c for c in FILTERABLE_COLS if c in df.columns]
+def col_has_real_values(series: pd.Series) -> bool:
+    s = series.copy()
+    s = s.replace(r"^\s*$", np.nan, regex=True)
+    s = s.astype("object").replace({
+        "nan": np.nan,
+        "NaN": np.nan,
+        "None": np.nan,
+        "<NA>": np.nan,
+        "": np.nan,
+    })
+    return s.notna().any()
+
+available_cols = [
+    c for c in FILTERABLE_COLS
+    if c in df.columns and col_has_real_values(df[c])
+]
 
 selected_filter_cols = st.sidebar.multiselect(
     "Dimensiones a filtrar",
@@ -1154,11 +1213,14 @@ selected_filter_cols = st.sidebar.multiselect(
 filters: dict[str, list[str]] = {}
 for col in selected_filter_cols:
     vals = (
-        pd.Series(df[col].astype(str).str.strip().unique())
+        df[col]
+        .replace(r"^\s*$", np.nan, regex=True)
         .dropna()
-        .sort_values()
-        .tolist()
+        .astype(str)
+        .str.strip()
     )
+
+    vals = sorted(v for v in vals.unique().tolist() if v.lower() != "nan")
 
     sel = st.sidebar.multiselect(
         f"{col}",
@@ -1272,7 +1334,7 @@ min_folios_breakdown = st.sidebar.number_input(
     key=key_minf,
 )
 
-st.sidebar.markdown("### Gráfico - Barras apiladas")
+st.sidebar.markdown("### Gráficos - Análisis Prospectivo")
 
 freq_mode = st.sidebar.radio(
     "Frecuencia de cosecha",
