@@ -295,6 +295,39 @@ class ImpagoOnDemandEngine:
         out = df.loc[~s.isin(exclude_norm)]
         return out
 
+    def _valid_breakdown_mask(self, df: pd.DataFrame, breakdown_col: str) -> pd.Series:
+        """
+        True solo para filas con valor real utilizable en la dimensión de breakdown.
+        Excluye nulos, vacíos y tokens basura frecuentes.
+        """
+        if breakdown_col not in df.columns:
+            raise KeyError(f"breakdown_col '{breakdown_col}' no existe en df.")
+
+        s = df[breakdown_col]
+        s_str = s.astype(str).str.strip()
+
+        invalid_tokens = {"", "nan", "none", "<na>", "null", "n/a"}
+
+        mask = s.notna() & ~s_str.str.lower().isin(invalid_tokens)
+        return mask
+
+    def _drop_missing_breakdown_rows(self, df: pd.DataFrame, breakdown_col: str) -> pd.DataFrame:
+        """
+        Elimina filas sin valor útil en breakdown_col y normaliza la columna.
+        """
+        out = df.copy()
+        mask = self._valid_breakdown_mask(out, breakdown_col)
+        out = out.loc[mask].copy()
+        out[breakdown_col] = out[breakdown_col].astype(str).str.strip()
+        return out
+
+    def _get_valid_breakdown_levels(self, df: pd.DataFrame, breakdown_col: str) -> list[str]:
+        """
+        Devuelve solo niveles válidos de breakdown, ya limpios y sin basura.
+        """
+        tmp = self._drop_missing_breakdown_rows(df, breakdown_col)
+        return sorted(tmp[breakdown_col].dropna().astype(str).str.strip().unique().tolist())
+
     def get_originacion_base(self, scenario, breakdown_col):
         """
         Obtiene la base de originación (MOB=1) bajo el escenario filtrado.
@@ -320,8 +353,8 @@ class ImpagoOnDemandEngine:
 
         df_f = df_f[cols]
 
-        # limpiar breakdown
-        df_f[breakdown_col] = df_f[breakdown_col].fillna("(Vacío)")
+        # conservar solo filas con breakdown disponible
+        df_f = self._drop_missing_breakdown_rows(df_f, breakdown_col)
 
         return df_f
 
@@ -338,6 +371,9 @@ class ImpagoOnDemandEngine:
         """
 
         df = self.get_originacion_base(scenario, breakdown_col)
+
+        if df.empty:
+            return pd.DataFrame(columns=["bucket", breakdown_col, "value", "total", "pct"]), []
 
         # -------------------------------------
         # Seleccionar últimas N cosechas base
@@ -478,8 +514,8 @@ class ImpagoOnDemandEngine:
 
         df_f = df_f[cols].copy()
 
-        # limpiar nulos del breakdown
-        df_f[breakdown_col] = df_f[breakdown_col].fillna("(Vacío)")
+        # conservar solo filas con breakdown disponible
+        df_f = self._drop_missing_breakdown_rows(df_f, breakdown_col)
 
         return df_f
 
@@ -506,6 +542,9 @@ class ImpagoOnDemandEngine:
             breakdown_col=breakdown_col,
             mob_fix=mob_fix,
         ).copy()
+
+        if df.empty:
+            return pd.DataFrame(columns=["bucket", breakdown_col, "n_eventos", "n_folios", "pct"]), []
 
         dt = pd.to_datetime(df["cosecha"])
 
@@ -885,11 +924,13 @@ class ImpagoOnDemandEngine:
             )
 
         # Niveles candidatos
-        levels = (
-            pd.Series(df_base[breakdown_col].astype(str).str.strip().unique())
-            .dropna()
-            .tolist()
-        )
+        df_base = self._drop_missing_breakdown_rows(df_base, breakdown_col)
+        if df_base.empty:
+            raise ValueError(
+                f"No hay registros con dato válido en '{breakdown_col}' bajo filtros={scenario.filters}."
+            )
+
+        levels = self._get_valid_breakdown_levels(df_base, breakdown_col)
 
         # Soporte por nivel (#folios)
         level_stats = []
@@ -1120,11 +1161,13 @@ class ImpagoOnDemandEngine:
             )
 
         # Niveles candidatos
-        levels = (
-            pd.Series(df_base[breakdown_col].astype(str).str.strip().unique())
-            .dropna()
-            .tolist()
-        )
+        df_base = self._drop_missing_breakdown_rows(df_base, breakdown_col)
+        if df_base.empty:
+            raise ValueError(
+                f"No hay registros con dato válido en '{breakdown_col}' bajo filtros={scenario.filters}."
+            )
+
+        levels = self._get_valid_breakdown_levels(df_base, breakdown_col)
 
         # Soporte por nivel (#folios)
         level_stats = []

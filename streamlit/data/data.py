@@ -4,7 +4,8 @@ from pathlib import Path
 
 def load_data() -> pd.DataFrame:
     base = Path(__file__).resolve().parent
-    csv_path = base / "df_master_dummy.csv"
+    # csv_path = base / "df_master_dummy.csv"
+    csv_path = base / "cosechas_demo_20260301.csv"
     df = pd.read_csv(csv_path)
 
     # Normalización de etiqueta (CDMX -> Cdmx)
