@@ -327,7 +327,111 @@ class ImpagoOnDemandEngine:
         """
         tmp = self._drop_missing_breakdown_rows(df, breakdown_col)
         return sorted(tmp[breakdown_col].dropna().astype(str).str.strip().unique().tolist())
+    
+    def _filter_base_by_cohort_range(
+        self,
+        df: pd.DataFrame,
+        cohort_start: str,
+        cohort_end: str,
+    ) -> pd.DataFrame:
+        """
+        Filtra un dataframe por rango inclusivo de cohortes base mensuales.
 
+        Parámetros
+        ----------
+        df : pd.DataFrame
+            Debe contener la columna 'cosecha' en formato YYYY-MM o parseable.
+        cohort_start : str
+            Cohorte inicial (incluida), por ejemplo '2022-06'.
+        cohort_end : str
+            Cohorte final (incluida), por ejemplo '2022-12'.
+        """
+        if df.empty:
+            return df.copy()
+
+        out = df.copy()
+
+        out["_cosecha_dt_"] = pd.to_datetime(out["cosecha"], errors="coerce")
+        out = out.loc[out["_cosecha_dt_"].notna()].copy()
+
+        if out.empty:
+            return out
+
+        start_dt = pd.to_datetime(cohort_start, errors="coerce")
+        end_dt = pd.to_datetime(cohort_end, errors="coerce")
+
+        if pd.isna(start_dt) or pd.isna(end_dt):
+            return out.iloc[0:0].copy()
+
+        if start_dt > end_dt:
+            start_dt, end_dt = end_dt, start_dt
+
+        out = out.loc[
+            (out["_cosecha_dt_"] >= start_dt) &
+            (out["_cosecha_dt_"] <= end_dt)
+        ].copy()
+
+        return out
+
+    def _build_bucket_from_cosecha(
+        self,
+        df: pd.DataFrame,
+        freq_mode: str,
+    ) -> tuple[pd.DataFrame, list[str]]:
+        """
+        Construye la columna bucket y el bucket_order a partir de la cosecha base.
+        La selección temporal ya debió haberse hecho antes, sobre cosechas mensuales.
+        """
+        if df.empty:
+            out = df.copy()
+            out["bucket"] = pd.Series(dtype="object")
+            return out, []
+
+        out = df.copy()
+
+        if "_cosecha_dt_" in out.columns:
+            dt = pd.to_datetime(out["_cosecha_dt_"], errors="coerce")
+        else:
+            dt = pd.to_datetime(out["cosecha"], errors="coerce")
+
+        out = out.loc[dt.notna()].copy()
+        dt = pd.to_datetime(out["cosecha"], errors="coerce")
+
+        if out.empty:
+            out["bucket"] = pd.Series(dtype="object")
+            return out, []
+
+        if freq_mode == "Mensual":
+            out["bucket"] = dt.dt.strftime("%Y-%m")
+
+            bucket_order = (
+                pd.DataFrame({
+                    "dt": dt,
+                    "bucket": out["bucket"]
+                })
+                .drop_duplicates()
+                .sort_values("dt")["bucket"]
+                .tolist()
+            )
+        else:
+            q_num = dt.dt.quarter
+            q_roman = q_num.map({1: "I", 2: "II", 3: "III", 4: "IV"})
+
+            out["bucket"] = dt.dt.year.astype(str) + "_" + q_roman
+
+            bucket_order = (
+                pd.DataFrame({
+                    "dt": dt,
+                    "bucket": out["bucket"]
+                })
+                .groupby("bucket", as_index=False)["dt"]
+                .min()
+                .sort_values("dt")["bucket"]
+                .tolist()
+            )
+
+        return out, bucket_order
+    
     def get_originacion_base(self, scenario, breakdown_col):
         """
         Obtiene la base de originación (MOB=1) bajo el escenario filtrado.
@@ -357,17 +461,22 @@ class ImpagoOnDemandEngine:
         df_f = self._drop_missing_breakdown_rows(df_f, breakdown_col)
 
         return df_f
-
+    
     def compute_breakdown_composition(
         self,
         scenario,
         breakdown_col,
         freq_mode,
         value_mode,
-        n_cosechas
+        cohort_start,
+        cohort_end,
     ):
         """
-        Calcula la composición por cosecha para la gráfica de barras apiladas.
+        Calcula la composición por cohorte para la gráfica de barras apiladas.
+
+        Regla temporal:
+        - primero se filtran las cosechas base mensuales dentro del rango [cohort_start, cohort_end]
+        - después se agregan a mensual o trimestral para visualización
         """
 
         df = self.get_originacion_base(scenario, breakdown_col)
@@ -376,86 +485,50 @@ class ImpagoOnDemandEngine:
             return pd.DataFrame(columns=["bucket", breakdown_col, "value", "total", "pct"]), []
 
         # -------------------------------------
-        # Seleccionar últimas N cosechas base
+        # Filtrar rango explícito de cohortes base
         # -------------------------------------
-        cosechas_base = (
-            pd.to_datetime(df["cosecha"])
-            .drop_duplicates()
-            .sort_values()
+        df = self._filter_base_by_cohort_range(
+            df=df,
+            cohort_start=cohort_start,
+            cohort_end=cohort_end,
         )
 
-        last_cosechas = cosechas_base[-n_cosechas:]
-        last_cosechas_str = set(last_cosechas.dt.strftime("%Y-%m"))
-
-        df = df[df["cosecha"].astype(str).isin(last_cosechas_str)].copy()
+        if df.empty:
+            return pd.DataFrame(columns=["bucket", breakdown_col, "value", "total", "pct"]), []
 
         # -------------------------
         # Construir bucket temporal
         # -------------------------
+        df, bucket_order = self._build_bucket_from_cosecha(
+            df=df,
+            freq_mode=freq_mode,
+        )
 
-        if freq_mode == "Mensual":
-
-            df["bucket"] = df["cosecha"].astype(str)
-
-            bucket_order = (
-                pd.to_datetime(df["bucket"])
-                .drop_duplicates()
-                .sort_values()
-                .dt.strftime("%Y-%m")
-                .tolist()
-            )
-
-        else:
-            dt = pd.to_datetime(df["cosecha"])
-
-            q_num = dt.dt.quarter
-            q_roman = q_num.map({1: "I", 2: "II", 3: "III", 4: "IV"})
-
-            df["bucket"] = dt.dt.year.astype(str) + "_" + q_roman
-
-            bucket_order = (
-                pd.DataFrame({
-                    "dt": dt,
-                    "bucket": df["bucket"]
-                })
-                .groupby("bucket", as_index=False)["dt"]
-                .min()
-                .sort_values("dt")["bucket"]
-                .tolist()
-            )
-
-        # -------------------------
-        # Seleccionar últimas N
-        # -------------------------
-
-        # last_buckets = bucket_order[-n_cosechas:]
-
-        # df = df[df["bucket"].isin(last_buckets)]
+        if df.empty or not bucket_order:
+            return pd.DataFrame(columns=["bucket", breakdown_col, "value", "total", "pct"]), []
 
         # -------------------------
         # Agregación
         # -------------------------
-
         if value_mode == "Monto fondeado":
-
             agg = (
                 df.groupby(["bucket", breakdown_col])["Monto Fondeado"]
                 .sum()
                 .reset_index(name="value")
             )
-
         else:
-
             agg = (
                 df.groupby(["bucket", breakdown_col])["folio"]
                 .nunique()
                 .reset_index(name="value")
             )
 
+        if agg.empty:
+            return pd.DataFrame(columns=["bucket", breakdown_col, "value", "total", "pct"]), []
+
         # -------------------------
         # Calcular porcentajes
         # -------------------------
-
         totals = (
             agg.groupby("bucket")["value"]
             .sum()
@@ -463,12 +536,11 @@ class ImpagoOnDemandEngine:
         )
 
         agg = agg.merge(totals, on="bucket", how="left")
-        agg["pct"] = agg["value"] / agg["total"]
+        agg["pct"] = np.where(agg["total"] > 0, agg["value"] / agg["total"], np.nan)
 
         # -------------------------
         # Barra Total
         # -------------------------
-
         total = (
             agg.groupby(breakdown_col)["value"]
             .sum()
@@ -477,14 +549,14 @@ class ImpagoOnDemandEngine:
 
         total["bucket"] = "Total"
         total["total"] = total["value"].sum()
-        total["pct"] = total["value"] / total["total"]
+        total["pct"] = np.where(total["total"] > 0, total["value"] / total["total"], np.nan)
 
         agg = pd.concat([agg, total], ignore_index=True)
 
         bucket_order = bucket_order + ["Total"]
 
         return agg, bucket_order
-
+    
     def get_transversal_base(self, scenario, breakdown_col, mob_fix):
         """
         Base para la gráfica de tendencias transversales:
@@ -518,23 +590,28 @@ class ImpagoOnDemandEngine:
         df_f = self._drop_missing_breakdown_rows(df_f, breakdown_col)
 
         return df_f
-
+    
     def compute_breakdown_transversal_trends(
         self,
         scenario,
         breakdown_col,
         mob_fix,
         freq_mode,
-        n_cosechas,
+        cohort_start,
+        cohort_end,
     ):
         """
         Calcula la tabla base para la gráfica de tendencias transversales:
         una línea por nivel del breakdown + línea Total,
-        mostrando la tasa de mora en un MOB fijo a lo largo de las cosechas.
+        mostrando la tasa de mora en un MOB fijo a lo largo de las cohortes.
 
         Regla temporal:
-        - primero se toman las últimas n cosechas mensuales base
+        - primero se filtran las cosechas base mensuales dentro del rango [cohort_start, cohort_end]
         - después se agregan a mensual o trimestral para visualización
+
+        Nota:
+        - si ciertas cohortes del rango no tienen madurez suficiente para el MOB fijo,
+          simplemente no aparecerán; no se inventan ceros.
         """
 
         df = self.get_transversal_base(
@@ -546,110 +623,58 @@ class ImpagoOnDemandEngine:
         if df.empty:
             return pd.DataFrame(columns=["bucket", breakdown_col, "n_eventos", "n_folios", "pct"]), []
 
-        dt = pd.to_datetime(df["cosecha"])
-
-        # -----------------------------------------
-        # 1) Definir cosechas mensuales base
-        # -----------------------------------------
-        df["_cosecha_month_"] = dt.dt.strftime("%Y-%m")
-
-        month_order = (
-            pd.DataFrame({
-                "dt": dt,
-                "month_bucket": df["_cosecha_month_"]
-            })
-            .sort_values("dt")["month_bucket"]
-            .tolist()
-        )
-        month_order = list(dict.fromkeys(month_order))
-
-        # Tomar últimas n cosechas mensuales base
-        last_months = month_order[-n_cosechas:]
-        df = df[df["_cosecha_month_"].isin(last_months)].copy()
-
-        # -----------------------------------------
-        # 2) Construir bucket para visualización
-        # -----------------------------------------
-        dt = pd.to_datetime(df["cosecha"])
-
-        if freq_mode == "Mensual":
-            df["bucket"] = df["_cosecha_month_"]
-
-            bucket_order = (
-                pd.DataFrame({
-                    "dt": dt,
-                    "bucket": df["bucket"]
-                })
-                .sort_values("dt")["bucket"]
-                .tolist()
-            )
-            bucket_order = list(dict.fromkeys(bucket_order))
-
-        else:
-            q_num = dt.dt.quarter
-            q_roman = q_num.map({1: "I", 2: "II", 3: "III", 4: "IV"})
-            df["bucket"] = dt.dt.year.astype(str) + "_" + q_roman
-
-            bucket_order = (
-                pd.DataFrame({
-                    "dt": dt,
-                    "bucket": df["bucket"]
-                })
-                .sort_values("dt")["bucket"]
-                .tolist()
-            )
-            bucket_order = list(dict.fromkeys(bucket_order))
-
-        # -----------------------------------------
-        # 3) Evento binario
-        # -----------------------------------------
-        event_col = scenario.tipo_mora
-
-        # cualquier valor positivo cuenta como evento
-        df["_event_flag_"] = (df[event_col].fillna(0) > 0).astype(int)
-
-        # -----------------------------------------
-        # 4) Cálculo por segmento
-        # -----------------------------------------
-        folio_seg = (
-            df.groupby(["bucket", breakdown_col, "folio"], as_index=False)
-            .agg(evento=("_event_flag_", "max"))
+        # -------------------------------------
+        # Filtrar rango explícito de cohortes base
+        # -------------------------------------
+        df = self._filter_base_by_cohort_range(
+            df=df,
+            cohort_start=cohort_start,
+            cohort_end=cohort_end,
         )
 
-        by_seg = (
-            folio_seg.groupby(["bucket", breakdown_col], as_index=False)
+        if df.empty:
+            return pd.DataFrame(columns=["bucket", breakdown_col, "n_eventos", "n_folios", "pct"]), []
+
+        # -------------------------
+        # Construir bucket temporal
+        # -------------------------
+        df, bucket_order = self._build_bucket_from_cosecha(
+            df=df,
+            freq_mode=freq_mode,
+        )
+
+        if df.empty or not bucket_order:
+            return pd.DataFrame(columns=["bucket", breakdown_col, "n_eventos", "n_folios", "pct"]), []
+
+        # evento = mora > 0 en el MOB fijo observado
+        df["_evento_"] = pd.to_numeric(df[scenario.tipo_mora], errors="coerce").fillna(0).gt(0).astype(int)
+
+        # por nivel
+        agg = (
+            df.groupby(["bucket", breakdown_col], as_index=False)
             .agg(
-                n_eventos=("evento", "sum"),
+                n_eventos=("_evento_", "sum"),
                 n_folios=("folio", "nunique"),
             )
         )
 
-        by_seg["pct"] = by_seg["n_eventos"] / by_seg["n_folios"]
+        if agg.empty:
+            return pd.DataFrame(columns=["bucket", breakdown_col, "n_eventos", "n_folios", "pct"]), []
 
-        # -----------------------------------------
-        # 5) Línea Total
-        # -----------------------------------------
-        folio_total = (
-            df.groupby(["bucket", "folio"], as_index=False)
-            .agg(evento=("_event_flag_", "max"))
-        )
+        agg["pct"] = np.where(agg["n_folios"] > 0, agg["n_eventos"] / agg["n_folios"], np.nan)
 
+        # línea total
         total = (
-            folio_total.groupby("bucket", as_index=False)
+            df.groupby("bucket", as_index=False)
             .agg(
-                n_eventos=("evento", "sum"),
+                n_eventos=("_evento_", "sum"),
                 n_folios=("folio", "nunique"),
             )
         )
-
         total[breakdown_col] = "Total"
-        total["pct"] = total["n_eventos"] / total["n_folios"]
+        total["pct"] = np.where(total["n_folios"] > 0, total["n_eventos"] / total["n_folios"], np.nan)
 
-        # -----------------------------------------
-        # 6) Salida
-        # -----------------------------------------
-        out = pd.concat([by_seg, total], ignore_index=True)
-        out[breakdown_col] = out[breakdown_col].astype(str)
+        out = pd.concat([agg, total], ignore_index=True)
 
         return out, bucket_order
 

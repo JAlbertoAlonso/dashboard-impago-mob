@@ -875,7 +875,6 @@ def plot_transversal_trends_plotly(
     bucket_order_raw = [str(x) for x in bucket_order]
 
     monthly_pattern = re.compile(r"^\d{4}-\d{2}$")
-
     is_monthly_bucket = all(monthly_pattern.match(x) for x in bucket_order_raw)
 
     if is_monthly_bucket:
@@ -896,11 +895,23 @@ def plot_transversal_trends_plotly(
         bucket_order_fmt = bucket_order_raw
         plot_df["bucket"] = plot_df["bucket"].astype(str)
 
-    levels = list(pd.Index(plot_df[breakdown_col].dropna().unique()))
+    # -----------------------------
+    # Orden explícito de niveles
+    # -----------------------------
+    levels = sorted(
+        plot_df[breakdown_col]
+        .dropna()
+        .astype(str)
+        .unique()
+        .tolist()
+    )
+
     levels_wo_total = [lvl for lvl in levels if lvl != "Total"]
     levels_final = levels_wo_total + (["Total"] if "Total" in levels else [])
 
-    # colores de Plotly
+    # -----------------------------
+    # Colores consistentes
+    # -----------------------------
     colors = [
         "#783DBE",
         "#5B8FF9",
@@ -913,12 +924,12 @@ def plot_transversal_trends_plotly(
         "#F6903D",
         "#008685",
     ]
+
     color_map = {
         lvl: colors[i % len(colors)]
         for i, lvl in enumerate(levels_wo_total)
     }
 
-    # Total con color gris oscuro
     if "Total" in levels_final:
         color_map["Total"] = "#555555"
 
@@ -926,10 +937,11 @@ def plot_transversal_trends_plotly(
 
     for lvl in levels_final:
         sub = plot_df[plot_df[breakdown_col] == lvl].copy()
+
         sub["bucket"] = pd.Categorical(
             sub["bucket"],
             categories=bucket_order_fmt,
-            ordered=True
+            ordered=True,
         )
         sub = sub.sort_values("bucket")
 
@@ -960,6 +972,9 @@ def plot_transversal_trends_plotly(
         yaxis_tickformat=".0%",
         legend_title=breakdown_col,
         hovermode="x unified",
+        legend=dict(
+            traceorder="normal"
+        ),
         hoverlabel=dict(
             bgcolor="rgba(255,255,255,0.98)",
             bordercolor=ATRIA_PURPLE,
@@ -1016,7 +1031,7 @@ def plot_transversal_trends_matplotlib(
 
     pivot = pivot.reindex(bucket_order_fmt)
 
-    fig, ax = plt.subplots(figsize=(12, 10))
+    fig, ax = plt.subplots(figsize=(12, 11))
 
     # Colores default tipo Plotly
     colors = [
@@ -1103,6 +1118,38 @@ def plot_transversal_trends_matplotlib(
 
     fig.tight_layout()
     return fig
+
+def get_sorted_cohort_labels(series: pd.Series) -> list[str]:
+    """
+    Devuelve cohortes válidas en formato YYYY-MM, ordenadas cronológicamente.
+    """
+    s = (
+        series.astype(str)
+        .str.strip()
+        .replace({
+            "nan": np.nan,
+            "NaN": np.nan,
+            "None": np.nan,
+            "<NA>": np.nan,
+            "": np.nan,
+        })
+        .dropna()
+    )
+
+    if s.empty:
+        return []
+
+    dt = pd.to_datetime(s, errors="coerce")
+    out = (
+        pd.DataFrame({"dt": dt})
+        .dropna()
+        .assign(label=lambda x: x["dt"].dt.strftime("%Y-%m"))
+        .drop_duplicates(subset=["label"])
+        .sort_values("dt")["label"]
+        .tolist()
+    )
+
+    return out
 
 
 # =================================
@@ -1336,56 +1383,117 @@ min_folios_breakdown = st.sidebar.number_input(
 
 st.sidebar.markdown("### Gráficos - Análisis Prospectivo")
 
+# =========================================================
+# Base filtrada para poblar cohortes y MOBs disponibles
+# =========================================================
+df_controls = engine.apply_filters(df, filters).copy()
+df_controls = engine.apply_castigo_filter(df_controls)
+
+available_cohorts = get_sorted_cohort_labels(df_controls["cosecha"]) if "cosecha" in df_controls.columns else []
+
+if not available_cohorts:
+    available_cohorts = get_sorted_cohort_labels(df["cosecha"]) if "cosecha" in df.columns else []
+
+if not available_cohorts:
+    available_cohorts = ["2022-01"]
+
+key_cohort_start = f"cohort_start_ui_{epoch}"
+key_cohort_end = f"cohort_end_ui_{epoch}"
+
+# defaults defensivos
+default_cohort_start = available_cohorts[0]
+default_cohort_end = available_cohorts[-1]
+
+current_start = st.session_state.get(key_cohort_start)
+current_end = st.session_state.get(key_cohort_end)
+
+if current_start not in available_cohorts:
+    st.session_state[key_cohort_start] = default_cohort_start
+
+if current_end not in available_cohorts:
+    st.session_state[key_cohort_end] = default_cohort_end
+
+cohort_start = st.sidebar.selectbox(
+    "Cosecha inicio",
+    options=available_cohorts,
+    key=key_cohort_start,
+)
+
+cohort_end = st.sidebar.selectbox(
+    "Cosecha fin",
+    options=available_cohorts,
+    key=key_cohort_end,
+)
+
+# normalización defensiva por si el usuario deja inicio > fin
+idx_start = available_cohorts.index(cohort_start)
+idx_end = available_cohorts.index(cohort_end)
+
+if idx_start > idx_end:
+    cohort_start, cohort_end = cohort_end, cohort_start
+
 freq_mode = st.sidebar.radio(
     "Frecuencia de cosecha",
     ["Mensual", "Trimestral"],
-    key=f"stack_freq_ui_{epoch}",
-)
-
-n_cosechas = st.sidebar.slider(
-    "Número de cosechas",
-    min_value=3,
-    max_value=24,
-    value=6,
-    step=1,
-    key=f"stack_window_ui_{epoch}",
+    key=f"prospect_freq_ui_{epoch}",
 )
 
 value_mode = st.sidebar.radio(
-    "Modo de composición",
+    "Modo de composición de barras",
     ["Monto fondeado", "Conteo de folios"],
     key=f"stack_value_mode_ui_{epoch}",
 )
 
-st.sidebar.markdown("### Gráfico - Tendencias transversales")
+# =========================================================
+# MOB fijo: múltiplos de 6 o cualquier MOB disponible
+# =========================================================
+mob_values_available = (
+    pd.to_numeric(df_controls["MOB"], errors="coerce")
+    .dropna()
+    .astype(int)
+    .sort_values()
+    .unique()
+    .tolist()
+) if "MOB" in df_controls.columns else []
 
-trans_freq_mode = st.sidebar.radio(
-    "Frecuencia de cosecha",
-    ["Mensual", "Trimestral"],
-    key=f"trans_freq_ui_{epoch}",
-)
+mob_values_available = [m for m in mob_values_available if 1 <= m <= mob_max_cap]
 
-trans_n_cosechas = st.sidebar.slider(
-    "Número de cosechas",
-    min_value=3,
-    max_value=24,
-    value=6,
-    step=1,
-    key=f"trans_window_ui_{epoch}",
-)
+if not mob_values_available:
+    mob_values_available = list(range(1, mob_max_cap + 1))
 
-trans_mob_options = list(range(6, mob_max_cap + 1, 6))
+key_mult6 = f"mob_fix_mult6_only_ui_{epoch}"
+key_trans_mob = f"trans_mob_fix_ui_{epoch}"
 
-if len(trans_mob_options) == 0:
-    trans_mob_options = [mob_max_cap]
+if key_mult6 not in st.session_state:
+    st.session_state[key_mult6] = True
+
+mob_fix_mult_6_only = st.session_state[key_mult6]
+
+# Construcción de opciones antes del render
+if mob_fix_mult_6_only:
+    trans_mob_options = [m for m in mob_values_available if m % 6 == 0]
+    if not trans_mob_options:
+        trans_mob_options = mob_values_available
+else:
+    trans_mob_options = mob_values_available
 
 default_trans_mob = 12 if 12 in trans_mob_options else trans_mob_options[-1]
+
+current_trans_mob = st.session_state.get(key_trans_mob)
+
+if current_trans_mob not in trans_mob_options:
+    st.session_state[key_trans_mob] = default_trans_mob
+
 
 trans_mob_fix = st.sidebar.select_slider(
     "MOB fijo",
     options=trans_mob_options,
-    value=default_trans_mob,
-    key=f"trans_mob_fix_ui_{epoch}",
+    key=key_trans_mob,
+)
+
+st.sidebar.checkbox(
+    "Usar solo múltiplos de 6",
+    key=key_mult6,
 )
 
 # Leer valores anteriores 
@@ -1408,15 +1516,38 @@ run = st.sidebar.button("Run scenario", type="primary")
 # -----------------------------
 def request_reset():
     old = st.session_state["reset_epoch"]
+
     # borra keys del epoch viejo
     for k in list(st.session_state.keys()):
         if k.endswith(f"_{old}") and (
-            k.startswith(("tipo_mora_ui_", "metric_mode_ui_", "castigo_enabled_ui_",
-                          "selected_filter_cols_ui_", "breakdown_col_ui_",
-                          "min_folios_breakdown_ui_", "show_heatmap_ui_",
-                          "mob_max_table_ui_", "mob_max_line_ui_", "filter_vals_"))
+            k.startswith((
+                "tipo_mora_ui_",
+                "metric_mode_ui_",
+                "castigo_enabled_ui_",
+                "selected_filter_cols_ui_",
+                "breakdown_col_ui_",
+                "min_folios_breakdown_ui_",
+                "show_heatmap_ui_",
+                "mob_max_table_ui_",
+                "mob_max_line_ui_",
+                "filter_vals_",
+                "cohort_start_ui_",
+                "cohort_end_ui_",
+                "prospect_freq_ui_",
+                "stack_value_mode_ui_",
+                "detail_render_mode_ui_",
+                "mob_fix_mult6_only_ui_",
+                "trans_mob_fix_ui_",
+                "stack_render_ui_",
+                "trans_render_mode_ui_",
+                "trans_freq_mode_ui_",
+                "trans_n_cosechas_ui_",
+                "n_cosechas_ui_",
+            ))
         ):
             st.session_state.pop(k, None)
+
+    st.session_state["reset_epoch"] = old + 1
 
     st.session_state["reset_epoch"] = old + 1
 
@@ -1764,7 +1895,7 @@ if st.session_state.get("last_res") is not None:
                 "Modo de gráfica",
                 ["Interactivo", "Con etiquetas %"],
                 index=0,
-                horizontal=False,
+                horizontal=True,
                 key=f"render_mode_tab2_{epoch}",
             )
 
@@ -1831,138 +1962,169 @@ if st.session_state.get("last_res") is not None:
             # =========================================================
             # Barras apiladas + Tendencias transversales lado a lado
             # =========================================================
+            detail_render_mode = st.radio(
+                "Modo de gráficas prospectivas",
+                ["Interactivo", "Con etiquetas"],
+                index=0,
+                horizontal=True,
+                key=f"detail_render_mode_ui_{epoch}",
+            )
+            
             col_stack, col_trans = st.columns([1, 1.15])
+
+            # detail_render_mode = st.radio(
+            #     "Modo de gráfica",
+            #     ["Interactivo", "Con etiquetas"],
+            #     index=0,
+            #     horizontal=True,
+            #     key=f"detail_render_mode_ui_{epoch}",
+            # )
 
             # ----------------------------------------------
             # COLUMNA IZQUIERDA: Barras apiladas
             # ----------------------------------------------
             with col_stack:
-                st.markdown("### Composición de originación")
+                # st.markdown("### Composición de originación")
 
-                stack_render_mode = st.radio(
-                    "Modo de gráfica",
-                    ["Interactivo", "Con etiquetas"],
-                    key=f"stack_render_ui_{epoch}"
-                )
+                # stack_render_mode = st.radio(
+                #     "Modo de gráfica",
+                #     ["Interactivo", "Con etiquetas"],
+                #     key=f"stack_render_ui_{epoch}"
+                # )
 
                 agg, bucket_order = engine.compute_breakdown_composition(
-                    sc,
-                    breakdown_col,
-                    freq_mode,
-                    value_mode,
-                    n_cosechas
+                    scenario=sc,
+                    breakdown_col=breakdown_col,
+                    freq_mode=freq_mode,
+                    value_mode=value_mode,
+                    cohort_start=cohort_start,
+                    cohort_end=cohort_end,
                 )
 
-                # --- Plotly ---
-                if stack_render_mode == "Interactivo":
-
-                    fig = plot_stacked_plotly(
-                        agg,
-                        bucket_order,
-                        breakdown_col,
-                        title_line_detalle
-                    )
-
-                    st.plotly_chart(fig, width="stretch")
-
-                    file_bytes = fig.to_html().encode()
-                    filename = f"{file_stub_det}_barras_apiladas.html"
-                    mime = "text/html"
-
-                # --- Matplotlib ---
+                if agg.empty or len(bucket_order) == 0:
+                    st.info("No hay datos disponibles para la composición en el rango de cohortes seleccionado.")
+                
                 else:
 
-                    fig = plot_stacked_matplotlib(
-                        agg,
-                        bucket_order,
-                        breakdown_col,
-                        title_line_detalle
+                    # --- Plotly ---
+                    if detail_render_mode == "Interactivo":
+
+                        fig = plot_stacked_plotly(
+                            agg,
+                            bucket_order,
+                            breakdown_col,
+                            title_line_detalle
+                        )
+
+                        st.plotly_chart(fig, width="stretch")
+
+                        file_bytes = fig.to_html().encode()
+                        filename = f"{file_stub_det}_barras_apiladas.html"
+                        mime = "text/html"
+
+                    # --- Matplotlib ---
+                    else:
+
+                        fig = plot_stacked_matplotlib(
+                            agg,
+                            bucket_order,
+                            breakdown_col,
+                            title_line_detalle
+                        )
+
+                        st.pyplot(fig)
+
+                        file_bytes = fig_to_png_bytes(fig)
+                        filename = f"{file_stub_det}_barras_apiladas.png"
+                        mime = "image/png"
+
+                    st.download_button(
+                        "Descargar gráfica",
+                        data=file_bytes,
+                        file_name=filename,
+                        mime=mime,
+                        key=f"download_stack_{epoch}",
+                        use_container_width=True,
                     )
-
-                    st.pyplot(fig)
-
-                    file_bytes = fig_to_png_bytes(fig)
-                    filename = f"{file_stub_det}_barras_apiladas.png"
-                    mime = "image/png"
-
-                st.download_button(
-                    "Descargar gráfica",
-                    data=file_bytes,
-                    file_name=filename,
-                    mime=mime,
-                    key=f"download_stack_{epoch}",
-                    use_container_width=True,
-                )
 
             # ----------------------------------------------
             # COLUMNA DERECHA: Tendencias transversales
             # ----------------------------------------------
             with col_trans:
-                st.markdown("### Tendencias transversales")
+                # st.markdown("### Tendencias transversales")
 
-                trans_render_mode = st.radio(
-                    "Modo de gráfica",
-                    ["Interactivo", "Con etiquetas %"],
-                    index=0,
-                    horizontal=True,
-                    key=f"trans_render_mode_ui_{epoch}",
-                )
+                # trans_render_mode = st.radio(
+                #     "Modo de gráfica",
+                #     ["Interactivo", "Con etiquetas %"],
+                #     index=0,
+                #     horizontal=True,
+                #     key=f"trans_render_mode_ui_{epoch}",
+                # )
 
                 trans_df, trans_bucket_order = engine.compute_breakdown_transversal_trends(
                     scenario=sc,
                     breakdown_col=breakdown_col,
                     mob_fix=trans_mob_fix,
-                    freq_mode=trans_freq_mode,
-                    n_cosechas=trans_n_cosechas,
+                    freq_mode=freq_mode,
+                    cohort_start=cohort_start,
+                    cohort_end=cohort_end,
                 )
 
                 trans_title = f"{title_line_detalle}, MOB {trans_mob_fix} fijo"
 
-                # --- Plotly ---
-                if trans_render_mode == "Interactivo":
-
-                    fig = plot_transversal_trends_plotly(
-                        trans_df,
-                        trans_bucket_order,
-                        breakdown_col,
-                        trans_title,
-                        tipo_mora=sc.tipo_mora,
-                        metric_mode_=sc.metric_mode,
+                if trans_df.empty or len(trans_bucket_order) == 0:
+                    st.info(
+                        "No hay datos disponibles para tendencias transversales con ese rango de cohortes "
+                        "y el MOB fijo seleccionado. Prueba con un MOB menor o un rango más antiguo."
                     )
 
-                    st.plotly_chart(fig, width="stretch")
-
-                    file_bytes = fig.to_html().encode()
-                    filename = f"{file_stub_det}_tendencias_transversales.html"
-                    mime = "text/html"
-
-                # --- Matplotlib ---
                 else:
 
-                    fig = plot_transversal_trends_matplotlib(
-                        trans_df,
-                        trans_bucket_order,
-                        breakdown_col,
-                        trans_title,
-                        tipo_mora=sc.tipo_mora,
-                        metric_mode_=sc.metric_mode,
-                        show_point_labels=True,
+                    # --- Plotly ---
+                    if detail_render_mode == "Interactivo":
+
+                        fig = plot_transversal_trends_plotly(
+                            trans_df,
+                            trans_bucket_order,
+                            breakdown_col,
+                            trans_title,
+                            tipo_mora=sc.tipo_mora,
+                            metric_mode_=sc.metric_mode,
+                        )
+
+                        st.plotly_chart(fig, width="stretch")
+
+                        file_bytes = fig.to_html().encode()
+                        filename = f"{file_stub_det}_tendencias_transversales.html"
+                        mime = "text/html"
+
+                    # --- Matplotlib ---
+                    else:
+
+                        fig = plot_transversal_trends_matplotlib(
+                            trans_df,
+                            trans_bucket_order,
+                            breakdown_col,
+                            trans_title,
+                            tipo_mora=sc.tipo_mora,
+                            metric_mode_=sc.metric_mode,
+                            show_point_labels=True,
+                        )
+
+                        st.pyplot(fig)
+
+                        file_bytes = fig_to_png_bytes(fig)
+                        filename = f"{file_stub_det}_tendencias_transversales.png"
+                        mime = "image/png"
+
+                    st.download_button(
+                        "Descargar gráfica",
+                        data=file_bytes,
+                        file_name=filename,
+                        mime=mime,
+                        key=f"download_transversal_{epoch}",
+                        use_container_width=True,
                     )
-
-                    st.pyplot(fig)
-
-                    file_bytes = fig_to_png_bytes(fig)
-                    filename = f"{file_stub_det}_tendencias_transversales.png"
-                    mime = "image/png"
-
-                st.download_button(
-                    "Descargar gráfica",
-                    data=file_bytes,
-                    file_name=filename,
-                    mime=mime,
-                    key=f"download_transversal_{epoch}",
-                    use_container_width=True,
-                )
 
 
 # -----------------------------
