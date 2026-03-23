@@ -921,7 +921,7 @@ class ImpagoOnDemandEngine:
         scenario: Scenario,
         *,
         breakdown_col: str = "Perfil",
-        max_levels: int = 8,
+        max_levels: int = None,
         min_folios: int = 200,
         mob_max: Optional[int] = None,
     ) -> list[dict]:
@@ -985,7 +985,8 @@ class ImpagoOnDemandEngine:
         else:
             level_stats.sort(key=lambda t: (-t[1], t[0]))
 
-        level_stats = level_stats[:max_levels]
+        if max_levels is not None:
+            level_stats = level_stats[:max_levels]
 
         # Columna y según modo
         y_col = "pct_impago_mob" if scenario.metric_mode == "cosechas" else "pct_ever_mob"
