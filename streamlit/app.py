@@ -51,6 +51,13 @@ def plot_curve_agg(
 
     y_col = "pct_impago_mob" if metric_mode_ == "cosechas" else "pct_ever_mob"
 
+    if y_col not in curve_df.columns:
+        available_cols = list(curve_df.columns)
+        raise KeyError(
+            f"La curva agregada no contiene la columna esperada '{y_col}'. "
+            f"metric_mode_={metric_mode_}. Columnas disponibles: {available_cols}"
+        )
+
     base = curve_df.copy()
     mob_num = pd.to_numeric(base["MOB"], errors="coerce")
     y_num = pd.to_numeric(base[y_col], errors="coerce")
@@ -270,6 +277,8 @@ def plot_curve_agg_plotly(
             )
         )
     )
+    fig = apply_axis_style(fig)
+
     return fig
 
 def plot_breakdown_curves_plotly(
@@ -284,7 +293,7 @@ def plot_breakdown_curves_plotly(
 ) -> go.Figure:
     fig = go.Figure()
 
-    # mob_max efectivo (si no viene, intenta inferir)
+    # mob_max efectivo
     if mob_max is None:
         mob_max_eff = 1
         for it in curves:
@@ -302,6 +311,7 @@ def plot_breakdown_curves_plotly(
         c[y_col] = pd.to_numeric(c[y_col], errors="coerce")
         c = c.dropna(subset=[mob_col]).copy()
         c[mob_col] = c[mob_col].astype(int)
+
         if mob_max is not None:
             c = c[c[mob_col] <= mob_max_eff].copy()
 
@@ -331,14 +341,17 @@ def plot_breakdown_curves_plotly(
         xaxis=dict(tickmode="linear", tick0=1, dtick=1),
         yaxis=dict(showgrid=True, gridcolor="#D9D9D9"),
         xaxis_showgrid=False,
-        margin=dict(t=80),
         legend=dict(
-            orientation="h",
+            orientation="v",
             yanchor="top",
-            y=1.02,
+            y=1,
             xanchor="left",
-            x=0
+            x=1.02,
+            font=dict(size=11),
+            itemsizing="constant",
+            # traceorder="normal",
         ),
+        margin=dict(t=80, r=220),
         hoverlabel=dict(
             bgcolor="rgba(255,255,255,0.98)",
             bordercolor="#783DBE",
@@ -348,6 +361,8 @@ def plot_breakdown_curves_plotly(
             )
         )
     )
+
+    fig = apply_axis_style(fig)
 
     return fig
 
@@ -474,8 +489,13 @@ def build_plot_title(
     fraude_txt = "con fraudes" if castigo_enabled_ else "sin fraudes"
     filtros_txt = _filters_label(filters_)
 
+    if breakdown_col_:
+        title_ = f"Cosechas {mora_txt}"
+    else:
+        title_ = f"Cosechas {mora_txt}@{mob_max_}"
+
     chunks = [
-        f"Cosechas {mora_txt}@{mob_max_}",
+        title_,
         fraude_txt,
     ]
 
@@ -686,11 +706,10 @@ def plot_stacked_plotly(agg, bucket_order, breakdown_col, title):
 
     pivot = pivot.reindex(bucket_order, fill_value=0)
 
-    # Defensivo si hay probelma en los buckets
+    # Defensivo si hay problema en los buckets
     row_sums = pivot.sum(axis=1).replace(0, np.nan)
     pivot = pivot.div(row_sums, axis=0).fillna(0)
 
-    # levels = list(pivot.columns)
     levels = sorted(pivot.columns)
     colors = [
         "#783DBE",
@@ -704,7 +723,7 @@ def plot_stacked_plotly(agg, bucket_order, breakdown_col, title):
         "#F6903D",
         "#008685",
     ]
-    
+
     color_map = {lvl: colors[i % len(colors)] for i, lvl in enumerate(levels)}
 
     fig = go.Figure()
@@ -722,8 +741,7 @@ def plot_stacked_plotly(agg, bucket_order, breakdown_col, title):
             ),
         )
 
-    fig.update_layout(
-        title=title,
+    layout_kwargs = dict(
         barmode="stack",
         height=650,
         yaxis_tickformat=".0%",
@@ -740,8 +758,20 @@ def plot_stacked_plotly(agg, bucket_order, breakdown_col, title):
                 size=16,
                 color="#1f1f1f"
             )
-        )
+        ),
+        margin=dict(t=20, r=40, l=40, b=40),
     )
+
+    if title:
+        layout_kwargs["title"] = dict(
+            text=title,
+            x=0.5,
+            xanchor="center",
+            font=dict(size=20, color="#1f1f1f"),
+        )
+        layout_kwargs["margin"] = dict(t=70, r=40, l=40, b=40)
+
+    fig.update_layout(**layout_kwargs)
 
     fig.update_xaxes(
         type="category",
@@ -749,6 +779,8 @@ def plot_stacked_plotly(agg, bucket_order, breakdown_col, title):
         categoryarray=bucket_order,
         tickangle=315
     )
+
+    fig = apply_axis_style(fig)
 
     return fig
 
@@ -964,8 +996,7 @@ def plot_transversal_trends_plotly(
             )
         )
 
-    fig.update_layout(
-        title=title,
+    layout_kwargs = dict(
         height=650,
         xaxis_title="Cosecha",
         yaxis_title=build_y_label(tipo_mora, metric_mode_),
@@ -982,8 +1013,20 @@ def plot_transversal_trends_plotly(
                 size=12,
                 color="#1f1f1f"
             )
-        )
+        ),
+        margin=dict(t=20, r=40, l=40, b=40),
     )
+
+    if title:
+        layout_kwargs["title"] = dict(
+            text=title,
+            x=0.5,
+            xanchor="center",
+            font=dict(size=20, color="#1f1f1f"),
+        )
+        layout_kwargs["margin"] = dict(t=70, r=40, l=40, b=40)
+
+    fig.update_layout(**layout_kwargs)
 
     fig.update_xaxes(
         type="category",
@@ -991,6 +1034,8 @@ def plot_transversal_trends_plotly(
         categoryarray=bucket_order_fmt,
         tickangle=315
     )
+
+    fig = apply_axis_style(fig)
 
     return fig
 
@@ -1151,15 +1196,79 @@ def get_sorted_cohort_labels(series: pd.Series) -> list[str]:
 
     return out
 
+def build_ui_signature(
+    *,
+    tipo_mora: str,
+    metric_mode: str,
+    filters: dict,
+    castigo_enabled: bool,
+    show_heatmap: bool,
+    mob_max_table_ui: int,
+    mob_max_line_ui: int,
+    breakdown_col,
+    cohort_start: str,
+    cohort_end: str,
+    freq_mode: str,
+    value_mode: str,
+    mob_fix_mult_6_only: bool,
+    trans_mob_fix: int,
+) -> dict:
+    """
+    Firma completa de controles que sí pueden existir antes del bloque de ejecución
+    y que deben disparar actualización automática del escenario.
+    """
+
+    filters_norm = {
+        str(k): sorted([str(v) for v in vals])
+        for k, vals in (filters or {}).items()
+    }
+
+    return {
+        "tipo_mora": str(tipo_mora),
+        "metric_mode": str(metric_mode),
+        "filters": filters_norm,
+        "castigo_enabled": bool(castigo_enabled),
+        "show_heatmap": bool(show_heatmap),
+        "mob_max_table_ui": int(mob_max_table_ui),
+        "mob_max_line_ui": int(mob_max_line_ui),
+        "breakdown_col": None if breakdown_col is None else str(breakdown_col),
+        "cohort_start": str(cohort_start),
+        "cohort_end": str(cohort_end),
+        "freq_mode": str(freq_mode),
+        "value_mode": str(value_mode),
+        "mob_fix_mult_6_only": bool(mob_fix_mult_6_only),
+        "trans_mob_fix": int(trans_mob_fix),
+    }
+
+def apply_axis_style(fig):
+
+    fig.update_layout(
+        font=dict(
+            family="Arial, sans-serif",
+            size=13,
+            color="#1f1f1f"
+        ),
+        xaxis=dict(
+            title=dict(font=dict(size=14, color="#000000")),
+            tickfont=dict(size=13, color="#000000")
+        ),
+        yaxis=dict(
+            title=dict(font=dict(size=14, color="#000000")),
+            tickfont=dict(size=13, color="#000000")
+        )
+    )
+
+    return fig
+
 
 # =================================
 # Panel de Configuración
 # =================================
 st.set_page_config(page_title="Demo Matriz de Impago", layout="wide")
 
-# -----------------------------
+# --------------------------------------------------
 # Cache data + engine
-# -----------------------------
+# --------------------------------------------------
 @st.cache_data
 def get_df() -> pd.DataFrame:
     return load_data()
@@ -1172,9 +1281,9 @@ def get_engine(df_: pd.DataFrame) -> ImpagoOnDemandEngine:
 
 engine = get_engine(df)
 
-# -----------------------------
+# --------------------------------------------------
 # Session state defaults
-# -----------------------------
+# --------------------------------------------------
 
 if "last_res" not in st.session_state:
     st.session_state["last_res"] = None
@@ -1185,12 +1294,18 @@ if "last_sc" not in st.session_state:
 if "last_inputs" not in st.session_state:
     st.session_state["last_inputs"] = None
 
+if "last_ui_signature" not in st.session_state:
+    st.session_state["last_ui_signature"] = None
+
+if "live_mode_after_run" not in st.session_state:
+    st.session_state["live_mode_after_run"] = False
+
 if "reset_epoch" not in st.session_state:
     st.session_state["reset_epoch"] = 0
 
-# -----------------------------
+# --------------------------------------------------
 # Sidebar – Controles de escenario
-# -----------------------------
+# --------------------------------------------------
 epoch = st.session_state["reset_epoch"]
 
 
@@ -1220,9 +1335,9 @@ castigo_enabled = st.sidebar.checkbox(
     key=f"castigo_enabled_ui_{epoch}",
 )
 
-# -----------------------------
+# --------------------------------------------------
 # Filtros
-# -----------------------------
+# --------------------------------------------------
 st.sidebar.markdown("#### Filtros")
 
 FILTERABLE_COLS = [
@@ -1279,16 +1394,15 @@ for col in selected_filter_cols:
     if sel:
         filters[col] = sel
 
-# -----------------------------
+# --------------------------------------------------
 # Cap MOB (común)
-# -----------------------------
+# --------------------------------------------------
 mob_max_cap = int(pd.to_numeric(df["MOB"], errors="coerce").max())
 
 key_heat = f"show_heatmap_ui_{epoch}"
 key_mob_table = f"mob_max_table_ui_{epoch}"
 key_mob_line = f"mob_max_line_ui_{epoch}"
 key_break = f"breakdown_col_ui_{epoch}"
-key_minf = f"min_folios_breakdown_ui_{epoch}"
 
 show_heatmap = st.sidebar.checkbox(
     "Mostrar heatmap",
@@ -1312,6 +1426,46 @@ mob_max_line_ui = st.sidebar.slider(
     value=min(24, mob_max_cap),
     step=1,
     key=key_mob_line,
+)
+
+# --------------------------------------------------
+# Total de folios contemplados en el escenario
+# --------------------------------------------------
+df_sidebar_count = engine.apply_filters(df, filters).copy()
+df_sidebar_count = engine.apply_castigo_filter(df_sidebar_count)
+
+total_folios_escenario = (
+    df_sidebar_count["folio"].nunique()
+    if "folio" in df_sidebar_count.columns and not df_sidebar_count.empty
+    else 0
+)
+
+st.sidebar.markdown(
+    f"""
+    <div style="
+        padding: 10px 12px;
+        border-left: 4px solid #783DBE;
+        background-color: rgba(0, 0, 0, 0.03);
+        border-radius: 6px;
+        margin-top: 8px;
+        margin-bottom: 4px;
+    ">
+        <div style="
+            font-size: 0.82rem;
+            color: #6b7280;
+        ">
+            Folios contemplados en el escenario
+        </div>
+        <div style="
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #1f1f1f;
+        ">
+            {total_folios_escenario:,}
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 
@@ -1372,14 +1526,8 @@ breakdown_col = st.sidebar.selectbox(
 
 breakdown_col = None if breakdown_col == "(Ninguno)" else breakdown_col
 
-min_folios_breakdown = st.sidebar.number_input(
-    "# Mínimo de folios",
-    min_value=1,
-    max_value=5000,
-    value=50,
-    step=10,
-    key=key_minf,
-)
+# Mínimo interno fijo para breakdowns
+min_folios_breakdown = 1
 
 st.sidebar.markdown("### Gráficos - Análisis Prospectivo")
 
@@ -1501,7 +1649,6 @@ show_heatmap = bool(st.session_state.get(key_heat, True))
 mob_max_table_ui = int(st.session_state.get(key_mob_table, min(36, mob_max_cap)))
 mob_max_line_ui = int(st.session_state.get(key_mob_line, min(24, mob_max_cap)))
 
-
 # =============================
 # Botones
 # =============================
@@ -1526,7 +1673,6 @@ def request_reset():
                 "castigo_enabled_ui_",
                 "selected_filter_cols_ui_",
                 "breakdown_col_ui_",
-                "min_folios_breakdown_ui_",
                 "show_heatmap_ui_",
                 "mob_max_table_ui_",
                 "mob_max_line_ui_",
@@ -1549,9 +1695,13 @@ def request_reset():
 
     st.session_state["reset_epoch"] = old + 1
 
-    st.session_state["reset_epoch"] = old + 1
-
-    for k in ["last_res", "last_sc", "last_inputs"]:
+    for k in [
+        "last_res",
+        "last_sc",
+        "last_inputs",
+        "last_ui_signature",
+        "live_mode_after_run",
+    ]:
         st.session_state.pop(k, None)
 
 st.sidebar.button(
@@ -1561,12 +1711,46 @@ st.sidebar.button(
     on_click=request_reset,
 )
 
+# Firma dinámica
+current_ui_signature = build_ui_signature(
+    tipo_mora=tipo_mora,
+    metric_mode=metric_mode_engine,
+    filters=filters,
+    castigo_enabled=bool(castigo_enabled),
+    show_heatmap=bool(show_heatmap),
+    mob_max_table_ui=int(mob_max_table_ui),
+    mob_max_line_ui=int(mob_max_line_ui),
+    breakdown_col=breakdown_col,
+    cohort_start=cohort_start,
+    cohort_end=cohort_end,
+    freq_mode=freq_mode,
+    value_mode=value_mode,
+    mob_fix_mult_6_only=bool(mob_fix_mult_6_only),
+    trans_mob_fix=int(trans_mob_fix),
+)
 
 # *********************************************************
 # Ejecución
-# 1) RUN -> corre el escenario y guarda resultados/inputs
+# 1) RUN manual activa el modo live
+# 2) Después de eso, cualquier cambio en sidebar re-ejecuta
 # *********************************************************
+
+should_run = False
+run_reason = None
+
 if run:
+    should_run = True
+    run_reason = "manual"
+
+elif (
+    st.session_state.get("live_mode_after_run", False)
+    and st.session_state.get("last_ui_signature") is not None
+    and current_ui_signature != st.session_state["last_ui_signature"]
+):
+    should_run = True
+    run_reason = "auto"
+
+if should_run:
     sc = Scenario(
         name="streamlit_demo_v1",
         tipo_mora=tipo_mora,
@@ -1575,7 +1759,13 @@ if run:
         breakdown_col=breakdown_col,
     )
 
-    with st.spinner("Ejecutando escenario..."):
+    spinner_msg = (
+        "Ejecutando escenario."
+        if run_reason == "manual"
+        else "Actualizando escenario automáticamente..."
+    )
+
+    with st.spinner(spinner_msg):
         engine.castigo_enabled = bool(castigo_enabled)
         res = engine.run_scenario(sc, show=False, save_outputs=False, debug=False)
 
@@ -1587,9 +1777,21 @@ if run:
             "filters": filters,
             "breakdown_col": breakdown_col,
             "castigo_enabled": bool(getattr(engine, "castigo_enabled", False)),
+            "show_heatmap": bool(show_heatmap),
+            "mob_max_table_ui": int(mob_max_table_ui),
+            "mob_max_line_ui": int(mob_max_line_ui),
+            "cohort_start": cohort_start,
+            "cohort_end": cohort_end,
+            "freq_mode": freq_mode,
+            "value_mode": value_mode,
+            "mob_fix_mult_6_only": bool(mob_fix_mult_6_only),
+            "trans_mob_fix": int(trans_mob_fix),
         }
+        st.session_state["last_ui_signature"] = current_ui_signature
+        st.session_state["live_mode_after_run"] = True
 
-    st.success("Listo")
+    if run_reason == "manual":
+        st.success("Listo")
 
 # *********************************************************
 # 2) RENDER -> si ya existe resultado previo
@@ -1599,11 +1801,11 @@ if st.session_state.get("last_res") is not None:
     sc = st.session_state["last_sc"]
     inputs = st.session_state["last_inputs"]
 
-    tipo_mora = inputs["tipo_mora"]
-    metric_mode = inputs["metric_mode"]
-    filters = inputs["filters"]
-    breakdown_col = inputs["breakdown_col"]
-    castigo_enabled = inputs["castigo_enabled"]
+    tipo_mora_run = inputs["tipo_mora"]
+    metric_mode_run = inputs["metric_mode"]
+    filters_run = inputs["filters"]
+    breakdown_col_run = inputs["breakdown_col"]
+    castigo_enabled_run = inputs["castigo_enabled"]
 
     # --- MOBs máxmos mostrados (sliders persistentes)
     mob_max_available = int(
@@ -1626,8 +1828,8 @@ if st.session_state.get("last_res") is not None:
 
     # --- Títulos (usa MOBs max mostrados)
     title_table = build_plot_title(
-        tipo_mora_=tipo_mora,
-        metric_mode_=metric_mode,
+        tipo_mora_=sc.tipo_mora,
+        metric_mode_=sc.metric_mode,
         filters_=filters,
         castigo_enabled_=bool(castigo_enabled),
         mob_max_=mob_max_table,
@@ -1636,8 +1838,8 @@ if st.session_state.get("last_res") is not None:
     )
 
     title_line_cosechas = build_plot_title(
-        tipo_mora_=tipo_mora,
-        metric_mode_=metric_mode,
+        tipo_mora_=sc.tipo_mora,
+        metric_mode_=sc.metric_mode,
         filters_=filters,
         castigo_enabled_=bool(castigo_enabled),
         mob_max_=mob_max_line,
@@ -1646,8 +1848,8 @@ if st.session_state.get("last_res") is not None:
     )
 
     title_line_detalle = build_plot_title(
-        tipo_mora_=tipo_mora,
-        metric_mode_=metric_mode,
+        tipo_mora_=sc.tipo_mora,
+        metric_mode_=sc.metric_mode,
         filters_=filters,
         castigo_enabled_=bool(castigo_enabled),
         mob_max_=mob_max_line,
@@ -1655,9 +1857,12 @@ if st.session_state.get("last_res") is not None:
         include_detail_=False,           
     )
 
+    title_detail_prospectivo = f"{title_line_detalle}, MOB {trans_mob_fix} fijo"
+
     file_stub_table = slug_filename(title_table)
     file_stub_line  = slug_filename(title_line_cosechas)
     file_stub_det   = slug_filename(title_line_detalle)
+    file_stub_prosp = slug_filename(title_detail_prospectivo)
 
 
     # =========================================================
@@ -1823,8 +2028,8 @@ if st.session_state.get("last_res") is not None:
         # -------------------------
         fig_line = plot_curve_agg(
             curve_view,
-            metric_mode,
-            tipo_mora=tipo_mora,
+            sc.metric_mode,
+            tipo_mora=sc.tipo_mora,
             mob_max=mob_max_line,
             title=title_line_cosechas,
             external_curves=external_curves if (compare_enabled and external_curves) else None,
@@ -1845,8 +2050,8 @@ if st.session_state.get("last_res") is not None:
         if use_plotly_tab1:
             fig_line = plot_curve_agg_plotly(
                 curve_view,
-                metric_mode,
-                tipo_mora=tipo_mora,
+                sc.metric_mode,
+                tipo_mora=sc.tipo_mora,
                 mob_max=mob_max_line,
                 title=title_line_cosechas,
                 external_curves=external_curves if (compare_enabled and external_curves) else None,
@@ -1858,8 +2063,8 @@ if st.session_state.get("last_res") is not None:
             
             fig_line = plot_curve_agg(
                 curve_view,
-                metric_mode,
-                tipo_mora=tipo_mora,
+                sc.metric_mode,
+                tipo_mora=sc.tipo_mora,
                 mob_max=mob_max_line,
                 title=title_line_cosechas,
                 external_curves=external_curves if (compare_enabled and external_curves) else None, 
@@ -1970,27 +2175,28 @@ if st.session_state.get("last_res") is not None:
                 key=f"detail_render_mode_ui_{epoch}",
             )
             
-            col_stack, col_trans = st.columns([1, 1.15])
+            st.markdown(
+                f"""
+                <div style="
+                    text-align: center;
+                    font-size: 1.8rem;
+                    font-weight: 900;
+                    color: #1f1f1f;
+                    margin-top: 0;
+                    margin-bottom: -0.1rem;
+                ">
+                    {title_detail_prospectivo}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-            # detail_render_mode = st.radio(
-            #     "Modo de gráfica",
-            #     ["Interactivo", "Con etiquetas"],
-            #     index=0,
-            #     horizontal=True,
-            #     key=f"detail_render_mode_ui_{epoch}",
-            # )
+            col_stack, col_trans = st.columns([1, 1.15])
 
             # ----------------------------------------------
             # COLUMNA IZQUIERDA: Barras apiladas
             # ----------------------------------------------
             with col_stack:
-                # st.markdown("### Composición de originación")
-
-                # stack_render_mode = st.radio(
-                #     "Modo de gráfica",
-                #     ["Interactivo", "Con etiquetas"],
-                #     key=f"stack_render_ui_{epoch}"
-                # )
 
                 agg, bucket_order = engine.compute_breakdown_composition(
                     scenario=sc,
@@ -2013,13 +2219,13 @@ if st.session_state.get("last_res") is not None:
                             agg,
                             bucket_order,
                             breakdown_col,
-                            title_line_detalle
+                            ""
                         )
 
                         st.plotly_chart(fig, width="stretch")
 
                         file_bytes = fig.to_html().encode()
-                        filename = f"{file_stub_det}_barras_apiladas.html"
+                        filename = f"{file_stub_prosp}_barras_apiladas.html"
                         mime = "text/html"
 
                     # --- Matplotlib ---
@@ -2029,13 +2235,13 @@ if st.session_state.get("last_res") is not None:
                             agg,
                             bucket_order,
                             breakdown_col,
-                            title_line_detalle
+                            ""
                         )
 
                         st.pyplot(fig)
 
                         file_bytes = fig_to_png_bytes(fig)
-                        filename = f"{file_stub_det}_barras_apiladas.png"
+                        filename = f"{file_stub_prosp}_barras_apiladas.png"
                         mime = "image/png"
 
                     st.download_button(
@@ -2051,15 +2257,6 @@ if st.session_state.get("last_res") is not None:
             # COLUMNA DERECHA: Tendencias transversales
             # ----------------------------------------------
             with col_trans:
-                # st.markdown("### Tendencias transversales")
-
-                # trans_render_mode = st.radio(
-                #     "Modo de gráfica",
-                #     ["Interactivo", "Con etiquetas %"],
-                #     index=0,
-                #     horizontal=True,
-                #     key=f"trans_render_mode_ui_{epoch}",
-                # )
 
                 trans_df, trans_bucket_order = engine.compute_breakdown_transversal_trends(
                     scenario=sc,
@@ -2070,7 +2267,7 @@ if st.session_state.get("last_res") is not None:
                     cohort_end=cohort_end,
                 )
 
-                trans_title = f"{title_line_detalle}, MOB {trans_mob_fix} fijo"
+                trans_title = ""
 
                 if trans_df.empty or len(trans_bucket_order) == 0:
                     st.info(
@@ -2095,7 +2292,7 @@ if st.session_state.get("last_res") is not None:
                         st.plotly_chart(fig, width="stretch")
 
                         file_bytes = fig.to_html().encode()
-                        filename = f"{file_stub_det}_tendencias_transversales.html"
+                        filename = f"{file_stub_prosp}_tendencias_transversales.html"
                         mime = "text/html"
 
                     # --- Matplotlib ---
@@ -2114,7 +2311,7 @@ if st.session_state.get("last_res") is not None:
                         st.pyplot(fig)
 
                         file_bytes = fig_to_png_bytes(fig)
-                        filename = f"{file_stub_det}_tendencias_transversales.png"
+                        filename = f"{file_stub_prosp}_tendencias_transversales.png"
                         mime = "image/png"
 
                     st.download_button(
