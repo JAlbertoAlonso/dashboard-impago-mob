@@ -1726,22 +1726,6 @@ class ImpagoOnDemandEngine:
         df_f["_cosecha_dt"] = pd.to_datetime(df_f[self.cohorte_col], errors="coerce")
         df_f = df_f.sort_values(["_cosecha_dt", self.mob_col]).drop(columns=["_cosecha_dt"])
 
-        # agg_long, matrix_dt = self.compute_matrix(
-        #     df_f,
-        #     tipo_mora=scenario.tipo_mora,
-        #     metric_mode=scenario.metric_mode,
-        # )
-
-        # curve = self.compute_curve_by_mob(agg_long, metric_mode=scenario.metric_mode)
-
-        # # --- Extra column for display (depends on metric_mode)
-        # if scenario.metric_mode == "cosechas":
-        #     extra_df = self.compute_exposure_by_cosecha(df_f)   # monto fondeado
-        #     extra_label = "$"
-        # else:
-        #     extra_df = self.compute_originations_count_by_cosecha(df_f)  # conteo originaciones
-        #     extra_label = "#"
-
         agg_long, matrix_dt = self.compute_matrix(
             df_f,
             tipo_mora=scenario.tipo_mora,
