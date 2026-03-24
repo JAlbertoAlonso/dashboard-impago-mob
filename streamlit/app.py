@@ -75,22 +75,21 @@ def plot_curve_agg(
         if 1 <= m <= mob_max_eff:
             s.loc[m] = v
 
-    y = s.values
-    y_smooth = smooth_series(y, method="ewm", span=5)
-
+    y = s.values.astype(float)
     x = list(range(1, mob_max_eff + 1))
 
     main_line, = ax.plot(
         x,
-        y_smooth,
+        y,
         ATRIA_PURPLE,
         linewidth=2.2
     )
+
     main_color = main_line.get_color()
 
     # Etiquetas por punto (solo si piden)
     if show_point_labels:
-        for xi, yi in zip(x, y_smooth):
+        for xi, yi in zip(x, y):
             if yi is None:
                 continue
             try:
@@ -132,20 +131,20 @@ def plot_curve_agg(
                 if 1 <= m <= mob_max_eff:
                     s2.loc[m] = v
 
-            y2 = s2.values
-            y2_smooth = smooth_series(y2, method="ewm", span=5)
+            y2 = s2.values.astype(float)
 
             ext_line, = ax.plot(
                 x,
-                y2_smooth,
+                y2,
                 linewidth=1.8,
                 linestyle="--",
                 label=str(label)
             )
+
             ext_color = ext_line.get_color()
 
             if show_point_labels:
-                for xi, yi in zip(x, y2_smooth):
+                for xi, yi in zip(x, y2):
                     try:
                         if np.isnan(yi):
                             continue
@@ -211,13 +210,12 @@ def plot_curve_agg_plotly(
     base = base.reindex(range(1, mob_max_eff + 1))
 
     y = base[y_col].astype(float).values
-    y_smooth = smooth_series(y, method="ewm", span=5)
 
     fig = go.Figure()
 
     fig.add_trace(go.Scatter(
         x=list(range(1, mob_max_eff + 1)),
-        y=y_smooth,
+        y=y,
         mode="lines",
         name="Escenario",
         line=dict(
@@ -244,11 +242,10 @@ def plot_curve_agg_plotly(
             ext = ext.reindex(range(1, mob_max_eff + 1))
 
             y_ext = ext["value"].astype(float).values
-            y_ext_smooth = smooth_series(y_ext, method="ewm", span=5)
 
             fig.add_trace(go.Scatter(
                 x=list(range(1, mob_max_eff + 1)),
-                y=y_ext_smooth,
+                y=y_ext,
                 mode="lines",
                 name=str(label),
                 line=dict(dash="dash"),
@@ -320,11 +317,11 @@ def plot_breakdown_curves_plotly(
         s = s.reindex(range(1, mob_max_eff + 1))
 
         y = s.astype(float).values
-        y_smooth = smooth_series(y, method="ewm", span=5)
 
         fig.add_trace(go.Scatter(
             x=list(range(1, mob_max_eff + 1)),
-            y=y_smooth,
+            # y=y_smooth,
+            y=y,
             mode="lines",
             name=str(it["label"]),
             hovertemplate="MOB %{x}<br>%{y:.1f}%<extra></extra>",

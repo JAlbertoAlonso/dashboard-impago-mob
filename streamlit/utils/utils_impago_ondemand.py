@@ -272,10 +272,14 @@ class ImpagoOnDemandEngine:
 
     def apply_castigo_filter(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Filtro global (switch) para excluir castigos por Estatus Legal.
-        Si castigo_enabled=False, regresa df sin cambios.
+        Lógica de fraude / estatus legal.
+
+        Semántica vigente:
+        - castigo_enabled = True  -> "Con fraude"  -> incluir todos los registros
+        - castigo_enabled = False -> "Sin fraude"  -> excluir Estatus Legal en exclude_values
         """
-        if not getattr(self, "castigo_enabled", False):
+        # Si "Con fraude" está activo, NO se filtra nada
+        if getattr(self, "castigo_enabled", False):
             return df
 
         col = getattr(self, "castigo_col", "Estatus Legal")
@@ -288,7 +292,6 @@ class ImpagoOnDemandEngine:
             self._log(f"[castigo] WARNING: columna '{col}' no existe. Se omite castigo filter.", debug=True)
             return df
 
-        # Normalización tipo apply_filters: str + strip
         s = df[col].astype(str).str.strip()
         exclude_norm = [str(x).strip() for x in exclude_vals]
 
@@ -811,19 +814,98 @@ class ImpagoOnDemandEngine:
         agg_long: pd.DataFrame,
         *,
         metric_mode: MetricMode,
-        decimals: int = 1, 
+        exposure_by_cosecha: Optional[pd.DataFrame] = None,
+        decimals: int = 1,
     ) -> pd.DataFrame:
         """
         Curva agregada por MOB.
 
-        cosechas:
-            pct_impago_mob = sum(bgi_sum)/sum(monto_sum)*100
-        ever:
-            pct_ever_mob   = sum(ever_sum)/sum(folio_den)*100
+        Nueva lógica preferida:
+        - Si viene exposure_by_cosecha:
+            calcula explícitamente la media ponderada de los % por cosecha
+            usando como peso la exposición/originación de cada cohorte.
+        - Si no viene exposure_by_cosecha:
+            conserva el fallback anterior basado en sum(num)/sum(den).
 
-        decimals:
-            Número de decimales para redondeo del porcentaje (default = 1)
+        Esto permite que:
+        - la fila resumen de la matriz,
+        - la curva agregada,
+        - y las curvas por breakdown
+        empaten exactamente con la definición:
+        promedio ponderado de % disponibles por MOB usando $ o # por cosecha.
         """
+
+        y_col = "pct_impago_mob" if metric_mode == "cosechas" else "pct_ever_mob"
+
+        # ============================================================
+        # Camino preferido: media ponderada explícita por cohorte
+        # ============================================================
+        if exposure_by_cosecha is not None and not exposure_by_cosecha.empty:
+            needed = {self.cohorte_col, self.mob_col, "pct"}
+            if not needed.issubset(set(agg_long.columns)):
+                raise KeyError(
+                    f"agg_long debe traer columnas {sorted(needed)} para el cálculo ponderado explícito."
+                )
+
+            expo = exposure_by_cosecha.copy()
+            if self.cohorte_col not in expo.columns or "exposure" not in expo.columns:
+                raise KeyError(
+                    "exposure_by_cosecha debe traer columnas: [cosecha, exposure]."
+                )
+
+            # Normalización de cohorte para alinear contra agg_long
+            expo["_cohorte_dt_"] = pd.to_datetime(expo[self.cohorte_col], errors="coerce")
+            expo = expo.loc[expo["_cohorte_dt_"].notna()].copy()
+
+            # Si hubiera repetidos por cohorte, consolidar
+            expo = (
+                expo.groupby("_cohorte_dt_", as_index=False)["exposure"]
+                .sum()
+            )
+
+            weights = pd.Series(
+                expo["exposure"].astype(float).values,
+                index=expo["_cohorte_dt_"]
+            )
+
+            base = agg_long[[self.cohorte_col, self.mob_col, "pct"]].copy()
+            base["_cohorte_dt_"] = pd.to_datetime(base[self.cohorte_col], errors="coerce")
+            base[self.mob_col] = pd.to_numeric(base[self.mob_col], errors="coerce")
+            base["pct"] = pd.to_numeric(base["pct"], errors="coerce")
+            base = base.dropna(subset=["_cohorte_dt_", self.mob_col]).copy()
+            base[self.mob_col] = base[self.mob_col].astype(int)
+
+            # Pivot cohorte x MOB con % por celda
+            pct_mat = (
+                base.pivot(index="_cohorte_dt_", columns=self.mob_col, values="pct")
+                .sort_index()
+            )
+
+            # Alinear pesos a las filas de la matriz
+            weights = weights.reindex(pct_mat.index)
+
+            rows = []
+            for mob in sorted(pct_mat.columns):
+                s_pct = pd.to_numeric(pct_mat[mob], errors="coerce")
+                s_w = pd.to_numeric(weights, errors="coerce")
+
+                mask = s_pct.notna() & s_w.notna() & (s_w > 0)
+                if mask.any():
+                    pct_weighted = np.average(
+                        s_pct.loc[mask].astype(float).values,
+                        weights=s_w.loc[mask].astype(float).values,
+                    )
+                else:
+                    pct_weighted = np.nan
+
+                rows.append((int(mob), round(float(pct_weighted), decimals) if pd.notna(pct_weighted) else np.nan))
+
+            out = pd.DataFrame(rows, columns=[self.mob_col, y_col]).sort_values(self.mob_col)
+            return out
+
+        # ============================================================
+        # Fallback: lógica anterior sum(num)/sum(den)
+        # ============================================================
         if metric_mode == "cosechas":
             needed = {"bgi_sum", "monto_sum", self.mob_col}
             if not needed.issubset(set(agg_long.columns)):
@@ -836,7 +918,7 @@ class ImpagoOnDemandEngine:
             den = g["monto_sum"].astype(float)
             num = g["bgi_sum"].astype(float)
 
-            g["pct_impago_mob"] = np.where(
+            g[y_col] = np.where(
                 den > 0,
                 (num / den) * 100.0,
                 np.nan,
@@ -844,7 +926,6 @@ class ImpagoOnDemandEngine:
 
             return g.sort_values(self.mob_col)
 
-        # --- EVER
         needed = {"ever_sum", "folio_den", self.mob_col}
         if not needed.issubset(set(agg_long.columns)):
             raise KeyError(f"agg_long no trae columnas para ever: {sorted(needed)}")
@@ -856,7 +937,7 @@ class ImpagoOnDemandEngine:
         den = g["folio_den"].astype(float)
         num = g["ever_sum"].astype(float)
 
-        g["pct_ever_mob"] = np.where(
+        g[y_col] = np.where(
             den > 0,
             (num / den) * 100.0,
             np.nan,
@@ -1004,9 +1085,15 @@ class ImpagoOnDemandEngine:
                 metric_mode=scenario.metric_mode,
             )
 
+            if scenario.metric_mode == "cosechas":
+                exposure_sub = self.compute_exposure_by_cosecha(df_lv)
+            else:
+                exposure_sub = self.compute_originations_count_by_cosecha(df_lv)
+
             curve_sub = self.compute_curve_by_mob(
                 agg_sub,
                 metric_mode=scenario.metric_mode,
+                exposure_by_cosecha=exposure_sub,
             )
 
             s = curve_sub[y_col].dropna()
@@ -1244,9 +1331,15 @@ class ImpagoOnDemandEngine:
                 metric_mode=scenario.metric_mode,
             )
 
+            if scenario.metric_mode == "cosechas":
+                exposure_sub = self.compute_exposure_by_cosecha(df_lv)
+            else:
+                exposure_sub = self.compute_originations_count_by_cosecha(df_lv)
+
             curve_sub = self.compute_curve_by_mob(
                 agg_sub,
                 metric_mode=scenario.metric_mode,
+                exposure_by_cosecha=exposure_sub,
             )
 
             s = curve_sub[y_col].dropna()
@@ -1513,7 +1606,12 @@ class ImpagoOnDemandEngine:
             if agg_long is None or metric_mode is None:
                 raise ValueError("add_mob_summary_row=True requiere agg_long y metric_mode.")
 
-            curve_df = self.compute_curve_by_mob(agg_long, metric_mode=metric_mode, decimals=summary_decimals)
+            curve_df = self.compute_curve_by_mob(
+                agg_long,
+                metric_mode=metric_mode,
+                exposure_by_cosecha=exposure_by_cosecha,
+                decimals=summary_decimals,
+            )
             y_col = "pct_impago_mob" if metric_mode == "cosechas" else "pct_ever_mob"
             summary_series = curve_df.set_index(self.mob_col)[y_col]
 
@@ -1628,21 +1726,42 @@ class ImpagoOnDemandEngine:
         df_f["_cosecha_dt"] = pd.to_datetime(df_f[self.cohorte_col], errors="coerce")
         df_f = df_f.sort_values(["_cosecha_dt", self.mob_col]).drop(columns=["_cosecha_dt"])
 
+        # agg_long, matrix_dt = self.compute_matrix(
+        #     df_f,
+        #     tipo_mora=scenario.tipo_mora,
+        #     metric_mode=scenario.metric_mode,
+        # )
+
+        # curve = self.compute_curve_by_mob(agg_long, metric_mode=scenario.metric_mode)
+
+        # # --- Extra column for display (depends on metric_mode)
+        # if scenario.metric_mode == "cosechas":
+        #     extra_df = self.compute_exposure_by_cosecha(df_f)   # monto fondeado
+        #     extra_label = "$"
+        # else:
+        #     extra_df = self.compute_originations_count_by_cosecha(df_f)  # conteo originaciones
+        #     extra_label = "#"
+
         agg_long, matrix_dt = self.compute_matrix(
             df_f,
             tipo_mora=scenario.tipo_mora,
             metric_mode=scenario.metric_mode,
         )
 
-        curve = self.compute_curve_by_mob(agg_long, metric_mode=scenario.metric_mode)
-
-        # --- Extra column for display (depends on metric_mode)
+        # --- Base de pesos por cohorte:
+        #     $ para cosechas / # para ever
         if scenario.metric_mode == "cosechas":
-            extra_df = self.compute_exposure_by_cosecha(df_f)   # monto fondeado
+            extra_df = self.compute_exposure_by_cosecha(df_f)
             extra_label = "$"
         else:
-            extra_df = self.compute_originations_count_by_cosecha(df_f)  # conteo originaciones
+            extra_df = self.compute_originations_count_by_cosecha(df_f)
             extra_label = "#"
+
+        curve = self.compute_curve_by_mob(
+            agg_long,
+            metric_mode=scenario.metric_mode,
+            exposure_by_cosecha=extra_df,
+        )
 
         # Logs breves
         mob_min = df_f[self.mob_col].min() if len(df_f) else None
