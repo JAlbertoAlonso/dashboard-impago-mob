@@ -564,6 +564,10 @@ class ImpagoOnDemandEngine:
         """
         Base para la gráfica de tendencias transversales:
         universo filtrado por escenario y observado en un MOB fijo.
+
+        Trae todo lo necesario para calcular:
+        - contribución monetaria en modo 'cosechas'
+        - contribución por conteo en modo 'ever'
         """
 
         # aplicar filtros del escenario
@@ -573,27 +577,35 @@ class ImpagoOnDemandEngine:
         df_f = self.apply_castigo_filter(df_f)
 
         # quedarnos solo con el MOB fijo
-        df_f = df_f[df_f["MOB"] == mob_fix].copy()
+        df_f = df_f[df_f[self.mob_col] == mob_fix].copy()
 
         # columnas mínimas necesarias
         cols = [
-            "cosecha",
-            "folio",
+            self.cohorte_col,
+            self.folio_col,
             breakdown_col,
-            scenario.tipo_mora,
         ]
 
-        # si existe monto fondeado, lo conservamos también
-        if "Monto Fondeado" in df_f.columns:
-            cols.append("Monto Fondeado")
+        # en cosechas necesitamos la columna de mora y monto
+        if scenario.metric_mode == "cosechas":
+            cols.append(scenario.tipo_mora)
+            if self.monto_col in df_f.columns:
+                cols.append(self.monto_col)
 
+        # en ever necesitamos la ever column real
+        else:
+            ever_col = self.ever_col_from_tipo_mora(scenario.tipo_mora)
+            if ever_col in df_f.columns:
+                cols.append(ever_col)
+
+        cols = [c for c in cols if c in df_f.columns]
         df_f = df_f[cols].copy()
 
         # conservar solo filas con breakdown disponible
         df_f = self._drop_missing_breakdown_rows(df_f, breakdown_col)
 
         return df_f
-    
+
     def compute_breakdown_transversal_trends(
         self,
         scenario,
@@ -604,17 +616,27 @@ class ImpagoOnDemandEngine:
         cohort_end,
     ):
         """
-        Calcula la tabla base para la gráfica de tendencias transversales:
-        una línea por nivel del breakdown + línea Total,
-        mostrando la tasa de mora en un MOB fijo a lo largo de las cohortes.
+        Calcula la tabla base para la gráfica de tendencias transversales
+        como contribución de cada segmento al % total de impago del corte
+        transversal (bucket + MOB fijo).
 
-        Regla temporal:
-        - primero se filtran las cosechas base mensuales dentro del rango [cohort_start, cohort_end]
-        - después se agregan a mensual o trimestral para visualización
+        Nueva semántica:
+        - Ya no mide la tasa interna de cada segmento.
+        - Ahora mide cuánto aporta cada segmento al % total del bucket,
+        de forma consistente con la matriz en el MOB fijo.
 
-        Nota:
-        - si ciertas cohortes del rango no tienen madurez suficiente para el MOB fijo,
-          simplemente no aparecerán; no se inventan ceros.
+        Reglas:
+        - metric_mode == "cosechas":
+            contrib_seg = sum(tipo_mora del segmento) / sum(Monto Fondeado total del bucket) * 100
+
+        - metric_mode == "ever":
+            contrib_seg = sum(ever_flag del segmento) / folios totales del bucket * 100
+
+        Esto garantiza que:
+        - la suma de contribuciones por segmento en cada bucket
+        sea igual al valor total del corte transversal;
+        - y que si solo vive un segmento por filtros,
+        ese segmento coincida exactamente con la matriz.
         """
 
         df = self.get_transversal_base(
@@ -624,7 +646,7 @@ class ImpagoOnDemandEngine:
         ).copy()
 
         if df.empty:
-            return pd.DataFrame(columns=["bucket", breakdown_col, "n_eventos", "n_folios", "pct"]), []
+            return pd.DataFrame(columns=["bucket", breakdown_col, "num_seg", "den_total", "pct"]), []
 
         # -------------------------------------
         # Filtrar rango explícito de cohortes base
@@ -636,7 +658,7 @@ class ImpagoOnDemandEngine:
         )
 
         if df.empty:
-            return pd.DataFrame(columns=["bucket", breakdown_col, "n_eventos", "n_folios", "pct"]), []
+            return pd.DataFrame(columns=["bucket", breakdown_col, "num_seg", "den_total", "pct"]), []
 
         # -------------------------
         # Construir bucket temporal
@@ -647,37 +669,141 @@ class ImpagoOnDemandEngine:
         )
 
         if df.empty or not bucket_order:
-            return pd.DataFrame(columns=["bucket", breakdown_col, "n_eventos", "n_folios", "pct"]), []
+            return pd.DataFrame(columns=["bucket", breakdown_col, "num_seg", "den_total", "pct"]), []
 
-        # evento = mora > 0 en el MOB fijo observado
-        df["_evento_"] = pd.to_numeric(df[scenario.tipo_mora], errors="coerce").fillna(0).gt(0).astype(int)
+        # =========================================================
+        # MODO COSECHAS -> contribución monetaria al % total
+        # =========================================================
+        if scenario.metric_mode == "cosechas":
+            if scenario.tipo_mora not in df.columns:
+                raise KeyError(
+                    f"tipo_mora '{scenario.tipo_mora}' no existe en la base transversal."
+                )
+            if self.monto_col not in df.columns:
+                raise KeyError(
+                    f"La base transversal no contiene '{self.monto_col}' para cálculo en modo cosechas."
+                )
 
-        # por nivel
-        agg = (
-            df.groupby(["bucket", breakdown_col], as_index=False)
+            df_c = df.copy()
+
+            # Numerador del segmento = suma de mora monetaria del segmento
+            df_c["_mora_num_"] = pd.to_numeric(
+                df_c[scenario.tipo_mora], errors="coerce"
+            ).fillna(0.0)
+
+            # Denominador total del bucket = suma total de monto fondeado del bucket
+            df_c["_monto_den_"] = pd.to_numeric(
+                df_c[self.monto_col], errors="coerce"
+            ).fillna(0.0)
+
+            # Numerador por segmento dentro del bucket
+            agg_seg = (
+                df_c.groupby(["bucket", breakdown_col], as_index=False)
+                .agg(
+                    num_seg=("_mora_num_", "sum"),
+                )
+            )
+
+            # Denominador total del bucket (NO por segmento)
+            den_total = (
+                df_c.groupby("bucket", as_index=False)
+                .agg(
+                    den_total=("_monto_den_", "sum"),
+                )
+            )
+
+            agg_seg = agg_seg.merge(den_total, on="bucket", how="left")
+            agg_seg["pct"] = np.where(
+                agg_seg["den_total"] > 0,
+                (agg_seg["num_seg"] / agg_seg["den_total"]),
+                np.nan,
+            )
+
+            # Línea total del bucket
+            total = (
+                df_c.groupby("bucket", as_index=False)
+                .agg(
+                    num_seg=("_mora_num_", "sum"),
+                    den_total=("_monto_den_", "sum"),
+                )
+            )
+            total[breakdown_col] = "Total"
+            total["pct"] = np.where(
+                total["den_total"] > 0,
+                (total["num_seg"] / total["den_total"]),
+                np.nan,
+            )
+
+            out = pd.concat([agg_seg, total], ignore_index=True)
+
+            # Orden opcional por bucket y breakdown
+            out["bucket"] = pd.Categorical(out["bucket"], categories=bucket_order, ordered=True)
+            out = out.sort_values(["bucket", breakdown_col]).reset_index(drop=True)
+
+            return out, bucket_order
+
+        # =========================================================
+        # MODO EVER -> contribución por conteo al % total
+        # =========================================================
+        ever_col = self.ever_col_from_tipo_mora(scenario.tipo_mora)
+        if ever_col not in df.columns:
+            raise KeyError(
+                f"Columna ever '{ever_col}' no existe en la base transversal para tipo_mora={scenario.tipo_mora}."
+            )
+
+        df_e = df.copy()
+
+        # Numerador del segmento = folios con ever_flag dentro del segmento
+        df_e["_ever_flag_"] = (
+            pd.to_numeric(df_e[ever_col], errors="coerce")
+            .fillna(0)
+            .gt(0)
+            .astype(int)
+        )
+
+        # Numerador por segmento dentro del bucket
+        agg_seg = (
+            df_e.groupby(["bucket", breakdown_col], as_index=False)
             .agg(
-                n_eventos=("_evento_", "sum"),
-                n_folios=("folio", "nunique"),
+                num_seg=("_ever_flag_", "sum"),
             )
         )
 
-        if agg.empty:
-            return pd.DataFrame(columns=["bucket", breakdown_col, "n_eventos", "n_folios", "pct"]), []
-
-        agg["pct"] = np.where(agg["n_folios"] > 0, agg["n_eventos"] / agg["n_folios"], np.nan)
-
-        # línea total
-        total = (
-            df.groupby("bucket", as_index=False)
+        # Denominador total del bucket = folios únicos totales del bucket
+        den_total = (
+            df_e.groupby("bucket", as_index=False)
             .agg(
-                n_eventos=("_evento_", "sum"),
-                n_folios=("folio", "nunique"),
+                den_total=(self.folio_col, "nunique"),
+            )
+        )
+
+        agg_seg = agg_seg.merge(den_total, on="bucket", how="left")
+        agg_seg["pct"] = np.where(
+            agg_seg["den_total"] > 0,
+            (agg_seg["num_seg"] / agg_seg["den_total"]),
+            np.nan,
+        )
+
+        # Línea total del bucket
+        total = (
+            df_e.groupby("bucket", as_index=False)
+            .agg(
+                num_seg=("_ever_flag_", "sum"),
+                den_total=(self.folio_col, "nunique"),
             )
         )
         total[breakdown_col] = "Total"
-        total["pct"] = np.where(total["n_folios"] > 0, total["n_eventos"] / total["n_folios"], np.nan)
+        total["pct"] = np.where(
+            total["den_total"] > 0,
+            (total["num_seg"] / total["den_total"]),
+            np.nan,
+        )
 
-        out = pd.concat([agg, total], ignore_index=True)
+        out = pd.concat([agg_seg, total], ignore_index=True)
+
+        # Orden opcional por bucket y breakdown
+        out["bucket"] = pd.Categorical(out["bucket"], categories=bucket_order, ordered=True)
+        out = out.sort_values(["bucket", breakdown_col]).reset_index(drop=True)
 
         return out, bucket_order
 

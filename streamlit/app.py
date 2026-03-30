@@ -892,6 +892,7 @@ def plot_transversal_trends_plotly(
     title,
     tipo_mora,
     metric_mode_,
+    fixed_y_0_100: bool = False,
 ):
     plot_df = df_plot.copy()
     plot_df[breakdown_col] = plot_df[breakdown_col].astype(str)
@@ -1014,6 +1015,21 @@ def plot_transversal_trends_plotly(
         margin=dict(t=20, r=40, l=40, b=40),
     )
 
+    if fixed_y_0_100:
+        layout_kwargs["yaxis"] = dict(
+            range=[0, 1],
+            tickformat=".0%",
+            showgrid=True,
+            gridcolor="#D9D9D9",
+        )
+    else:
+        layout_kwargs["yaxis"] = dict(
+            tickformat=".0%",
+            showgrid=True,
+            gridcolor="#D9D9D9",
+            autorange=True,
+        )
+
     if title:
         layout_kwargs["title"] = dict(
             text=title,
@@ -1044,6 +1060,7 @@ def plot_transversal_trends_matplotlib(
     tipo_mora,
     metric_mode_,
     show_point_labels: bool = True,
+    force_y_0_100: bool = False,
 ):
     plot_df = df_plot.copy()
     plot_df[breakdown_col] = plot_df[breakdown_col].astype(str)
@@ -1148,6 +1165,9 @@ def plot_transversal_trends_matplotlib(
     ax.grid(False)
     ax.grid(axis="y", which="major", color="#D9D9D9", linewidth=1.0)
 
+    if force_y_0_100:
+        ax.set_ylim(0, 1)
+
     if title:
         ax.set_title(title)
 
@@ -1209,6 +1229,7 @@ def build_ui_signature(
     value_mode: str,
     mob_fix_mult_6_only: bool,
     trans_mob_fix: int,
+    trans_yaxis_0_100: bool,
 ) -> dict:
     """
     Firma completa de controles que sí pueden existir antes del bloque de ejecución
@@ -1235,6 +1256,7 @@ def build_ui_signature(
         "value_mode": str(value_mode),
         "mob_fix_mult_6_only": bool(mob_fix_mult_6_only),
         "trans_mob_fix": int(trans_mob_fix),
+        "trans_yaxis_0_100": bool(trans_yaxis_0_100),
     }
 
 def apply_axis_style(fig):
@@ -1426,39 +1448,107 @@ mob_max_line_ui = st.sidebar.slider(
 )
 
 # --------------------------------------------------
-# Total de folios contemplados en el escenario
+# Totales del escenario en sidebar
 # --------------------------------------------------
 df_sidebar_count = engine.apply_filters(df, filters).copy()
 df_sidebar_count = engine.apply_castigo_filter(df_sidebar_count)
 
+tipo_mora_sidebar = tipo_mora  # usa la mora seleccionada actualmente en sidebar
+
+# Normalización defensiva
+if tipo_mora_sidebar in df_sidebar_count.columns:
+    df_sidebar_count[tipo_mora_sidebar] = pd.to_numeric(
+        df_sidebar_count[tipo_mora_sidebar], errors="coerce"
+    ).fillna(0)
+else:
+    df_sidebar_count[tipo_mora_sidebar] = 0
+
+if "Saldo Capital" in df_sidebar_count.columns:
+    df_sidebar_count["Saldo Capital"] = pd.to_numeric(
+        df_sidebar_count["Saldo Capital"], errors="coerce"
+    ).fillna(0)
+else:
+    df_sidebar_count["Saldo Capital"] = 0.0
+
+if "MOB" in df_sidebar_count.columns:
+    df_sidebar_count["MOB"] = pd.to_numeric(
+        df_sidebar_count["MOB"], errors="coerce"
+    )
+else:
+    df_sidebar_count["MOB"] = np.nan
+
+# --------------------------------------------------
+# Folios contemplados = folios únicos que sí tienen mora > 0
+# bajo los filtros del escenario
+# --------------------------------------------------
+df_sidebar_mora = df_sidebar_count.loc[
+    df_sidebar_count[tipo_mora_sidebar] > 0
+].copy()
+
 total_folios_escenario = (
-    df_sidebar_count["folio"].nunique()
-    if "folio" in df_sidebar_count.columns and not df_sidebar_count.empty
+    df_sidebar_mora["folio"].nunique()
+    if "folio" in df_sidebar_mora.columns and not df_sidebar_mora.empty
     else 0
+)
+
+# --------------------------------------------------
+# Saldo Capital contemplado = un solo registro por folio
+# usando el ÚLTIMO MOB observado con esa mora
+# --------------------------------------------------
+if {"folio", "Saldo Capital", "MOB"}.issubset(df_sidebar_mora.columns) and not df_sidebar_mora.empty:
+    saldo_por_folio = (
+        df_sidebar_mora[["folio", "MOB", "Saldo Capital"]]
+        .copy()
+        .sort_values(["folio", "MOB"])
+        .drop_duplicates(subset=["folio"], keep="last")
+    )
+
+    total_saldo_capital_escenario = float(saldo_por_folio["Saldo Capital"].sum())
+else:
+    total_saldo_capital_escenario = 0.0
+
+card_style = """
+    padding: 10px 12px;
+    border-left: 4px solid #783DBE;
+    background-color: rgba(0, 0, 0, 0.03);
+    border-radius: 6px;
+    margin-top: 8px;
+    margin-bottom: 4px;
+"""
+
+label_style = """
+    font-size: 0.82rem;
+    color: #6b7280;
+"""
+
+value_style = """
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #1f1f1f;
+"""
+
+st.sidebar.markdown(
+    f"""
+    <div style="{card_style}">
+        <div style="{label_style}">
+            Folios contemplados en el escenario
+        </div>
+        <div style="{value_style}">
+            {total_folios_escenario:,}
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 st.sidebar.markdown(
     f"""
-    <div style="
-        padding: 10px 12px;
-        border-left: 4px solid #783DBE;
-        background-color: rgba(0, 0, 0, 0.03);
-        border-radius: 6px;
-        margin-top: 8px;
-        margin-bottom: 4px;
-    ">
-        <div style="
-            font-size: 0.82rem;
-            color: #6b7280;
-        ">
-            Folios contemplados en el escenario
+    <div style="{card_style}">
+        <div style="{label_style}">
+            Saldo a capital contemplado en el escenario
         </div>
-        <div style="
-            font-size: 1.2rem;
-            font-weight: 700;
-            color: #1f1f1f;
-        ">
-            {total_folios_escenario:,}
+        <div style="{value_style}">
+            ${total_saldo_capital_escenario:,.0f}
         </div>
     </div>
     """,
@@ -1641,6 +1731,14 @@ st.sidebar.checkbox(
     key=key_mult6,
 )
 
+key_trans_yaxis = f"trans_yaxis_0_100_ui_{epoch}"
+
+trans_yaxis_0_100 = st.sidebar.checkbox(
+    "Fijar eje a 100%",
+    value=False,
+    key=key_trans_yaxis,
+)
+
 # Leer valores anteriores 
 show_heatmap = bool(st.session_state.get(key_heat, True))
 mob_max_table_ui = int(st.session_state.get(key_mob_table, min(36, mob_max_cap)))
@@ -1681,6 +1779,7 @@ def request_reset():
                 "detail_render_mode_ui_",
                 "mob_fix_mult6_only_ui_",
                 "trans_mob_fix_ui_",
+                "trans_yaxis_0_100_ui_",
                 "stack_render_ui_",
                 "trans_render_mode_ui_",
                 "trans_freq_mode_ui_",
@@ -1724,6 +1823,7 @@ current_ui_signature = build_ui_signature(
     value_mode=value_mode,
     mob_fix_mult_6_only=bool(mob_fix_mult_6_only),
     trans_mob_fix=int(trans_mob_fix),
+    trans_yaxis_0_100=bool(trans_yaxis_0_100),
 )
 
 # *********************************************************
@@ -2284,6 +2384,7 @@ if st.session_state.get("last_res") is not None:
                             trans_title,
                             tipo_mora=sc.tipo_mora,
                             metric_mode_=sc.metric_mode,
+                            fixed_y_0_100 = trans_yaxis_0_100
                         )
 
                         st.plotly_chart(fig, width="stretch")
@@ -2303,6 +2404,7 @@ if st.session_state.get("last_res") is not None:
                             tipo_mora=sc.tipo_mora,
                             metric_mode_=sc.metric_mode,
                             show_point_labels=True,
+                            force_y_0_100=trans_yaxis_0_100
                         )
 
                         st.pyplot(fig)
