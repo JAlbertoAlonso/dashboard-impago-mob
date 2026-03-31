@@ -388,7 +388,8 @@ def plot_heatmap_basic(matrix_dt: pd.DataFrame, title: str = "") -> plt.Figure:
     ylabels = []
     for idx in m.index:
         try:
-            ylabels.append(pd.to_datetime(idx).strftime("%y-%m"))
+            d = pd.to_datetime(idx, format="%Y-%m", errors="coerce")
+            ylabels.append(d.strftime("%y-%m") if pd.notna(d) else str(idx))
         except Exception:
             ylabels.append(str(idx))
     ax.set_yticklabels(ylabels)
@@ -1070,7 +1071,7 @@ def plot_transversal_trends_matplotlib(
     # -----------------------------
     bucket_order_raw = list(bucket_order)
 
-    parsed_order = pd.to_datetime(bucket_order_raw, errors="coerce")
+    parsed_order = pd.to_datetime(bucket_order_raw, format="%Y-%m", errors="coerce")
     if pd.notna(parsed_order).all():
         bucket_order_fmt = [d.strftime("%Y-%m") for d in parsed_order]
         bucket_map = {
@@ -1201,7 +1202,7 @@ def get_sorted_cohort_labels(series: pd.Series) -> list[str]:
     if s.empty:
         return []
 
-    dt = pd.to_datetime(s, errors="coerce")
+    dt = pd.to_datetime(s, format="%Y-%m", errors="coerce")
     out = (
         pd.DataFrame({"dt": dt})
         .dropna()

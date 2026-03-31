@@ -354,14 +354,14 @@ class ImpagoOnDemandEngine:
 
         out = df.copy()
 
-        out["_cosecha_dt_"] = pd.to_datetime(out["cosecha"], errors="coerce")
+        out["_cosecha_dt_"] = pd.to_datetime(out["cosecha"], format="%Y-%m", errors="coerce")
         out = out.loc[out["_cosecha_dt_"].notna()].copy()
 
         if out.empty:
             return out
 
-        start_dt = pd.to_datetime(cohort_start, errors="coerce")
-        end_dt = pd.to_datetime(cohort_end, errors="coerce")
+        start_dt = pd.to_datetime(cohort_start, format="%Y-%m", errors="coerce")
+        end_dt = pd.to_datetime(cohort_end, format="%Y-%m", errors="coerce")
 
         if pd.isna(start_dt) or pd.isna(end_dt):
             return out.iloc[0:0].copy()
@@ -393,12 +393,12 @@ class ImpagoOnDemandEngine:
         out = df.copy()
 
         if "_cosecha_dt_" in out.columns:
-            dt = pd.to_datetime(out["_cosecha_dt_"], errors="coerce")
+            dt = pd.to_datetime(out["_cosecha_dt_"], format="%Y-%m", errors="coerce")
         else:
-            dt = pd.to_datetime(out["cosecha"], errors="coerce")
+            dt = pd.to_datetime(out["cosecha"], format="%Y-%m", errors="coerce")
 
         out = out.loc[dt.notna()].copy()
-        dt = pd.to_datetime(out["cosecha"], errors="coerce")
+        dt = pd.to_datetime(out["cosecha"], format="%Y-%m", errors="coerce")
 
         if out.empty:
             out["bucket"] = pd.Series(dtype="object")
@@ -922,7 +922,7 @@ class ImpagoOnDemandEngine:
         mat = agg.pivot(index=self.cohorte_col, columns=self.mob_col, values="pct")
 
         # Orden cronológico de cosecha sin mutar df: casteo local para sort del index
-        idx_dt = pd.to_datetime(mat.index, errors="coerce")
+        idx_dt = pd.to_datetime(mat.index, format="%Y-%m", errors="coerce")
         mat = mat.set_index(idx_dt)
         mat.index.name = self.cohorte_col
         mat = mat.sort_index()
@@ -980,7 +980,7 @@ class ImpagoOnDemandEngine:
                 )
 
             # Normalización de cohorte para alinear contra agg_long
-            expo["_cohorte_dt_"] = pd.to_datetime(expo[self.cohorte_col], errors="coerce")
+            expo["_cohorte_dt_"] = pd.to_datetime(expo[self.cohorte_col], format="%Y-%m", errors="coerce")
             expo = expo.loc[expo["_cohorte_dt_"].notna()].copy()
 
             # Si hubiera repetidos por cohorte, consolidar
@@ -995,7 +995,7 @@ class ImpagoOnDemandEngine:
             )
 
             base = agg_long[[self.cohorte_col, self.mob_col, "pct"]].copy()
-            base["_cohorte_dt_"] = pd.to_datetime(base[self.cohorte_col], errors="coerce")
+            base["_cohorte_dt_"] = pd.to_datetime(base[self.cohorte_col], format="%Y-%m", errors="coerce")
             base[self.mob_col] = pd.to_numeric(base[self.mob_col], errors="coerce")
             base["pct"] = pd.to_numeric(base["pct"], errors="coerce")
             base = base.dropna(subset=["_cohorte_dt_", self.mob_col]).copy()
@@ -1092,7 +1092,7 @@ class ImpagoOnDemandEngine:
             df_mob1.groupby(self.cohorte_col, as_index=False)
             .agg(exposure=(self.monto_col, "sum"))
         )
-        g["_cosecha_dt"] = pd.to_datetime(g[self.cohorte_col], errors="coerce")
+        g["_cosecha_dt"] = pd.to_datetime(g[self.cohorte_col], format="%Y-%m", errors="coerce")
         g = g.sort_values("_cosecha_dt").drop(columns=["_cosecha_dt"])
 
         return g
@@ -1118,7 +1118,7 @@ class ImpagoOnDemandEngine:
             df_mob1.groupby(self.cohorte_col, as_index=False)
             .agg(exposure=(self.folio_col, "nunique"))
         )
-        g["_cosecha_dt"] = pd.to_datetime(g[self.cohorte_col], errors="coerce")
+        g["_cosecha_dt"] = pd.to_datetime(g[self.cohorte_col], format="%Y-%m", errors="coerce")
         g = g.sort_values("_cosecha_dt").drop(columns=["_cosecha_dt"])
 
         return g
@@ -1277,7 +1277,7 @@ class ImpagoOnDemandEngine:
     @staticmethod
     def plot_exposure_by_cosecha(expo_df: pd.DataFrame, *, x_col: str, y_col: str, title: str, show: bool = True):
         ATRIA_PURPLE = "#7A3EB1"
-        x_dt = pd.to_datetime(expo_df[x_col], errors="coerce")
+        x_dt = pd.to_datetime(expo_df[x_col], format="%Y-%m", errors="coerce")
         plt.figure(figsize=(10, 5))
         plt.plot(x_dt, expo_df[y_col], marker="o")
         plt.xlabel("Cosecha")
@@ -1691,12 +1691,12 @@ class ImpagoOnDemandEngine:
                 raise KeyError("exposure_by_cosecha debe traer columnas: [cosecha, exposure].")
 
             expo = exposure_by_cosecha.copy()
-            expo["_cosecha_dt"] = pd.to_datetime(expo[self.cohorte_col], errors="coerce")
+            expo["_cosecha_dt"] = pd.to_datetime(expo[self.cohorte_col], format="%Y-%m", errors="coerce")
             expo = expo.sort_values("_cosecha_dt").drop(columns=["_cosecha_dt"])
 
             expo_idx = [
-                pd.to_datetime(x, errors="coerce").strftime("%y-%m")
-                if pd.notna(pd.to_datetime(x, errors="coerce"))
+                pd.to_datetime(x, format="%Y-%m", errors="coerce").strftime("%y-%m")
+                if pd.notna(pd.to_datetime(x, format="%Y-%m", errors="coerce"))
                 else blank
                 for x in expo[self.cohorte_col]
             ]
@@ -1849,7 +1849,7 @@ class ImpagoOnDemandEngine:
             )
 
         # Orden interno por cosecha (sin tocar contrato): ayuda a consistencia en logs
-        df_f["_cosecha_dt"] = pd.to_datetime(df_f[self.cohorte_col], errors="coerce")
+        df_f["_cosecha_dt"] = pd.to_datetime(df_f[self.cohorte_col], format="%Y-%m", errors="coerce")
         df_f = df_f.sort_values(["_cosecha_dt", self.mob_col]).drop(columns=["_cosecha_dt"])
 
         agg_long, matrix_dt = self.compute_matrix(
@@ -1911,8 +1911,8 @@ class ImpagoOnDemandEngine:
             fig_break = self.plot_curve_by_mob_breakdown(
                 scenario,
                 breakdown_col=scenario.breakdown_col,
-                max_levels=10,
-                min_folios=50,
+                max_levels=100,
+                min_folios=1,
                 show=show,
                 debug=debug,
             )
@@ -1920,7 +1920,7 @@ class ImpagoOnDemandEngine:
 
         # (3) Monto Fondeado
         fig2 = plt.figure(figsize=(10, 5))
-        x_dt = pd.to_datetime(extra_df[self.cohorte_col], errors="coerce")
+        x_dt = pd.to_datetime(extra_df[self.cohorte_col], format="%Y-%m", errors="coerce")
         plt.plot(x_dt, extra_df["exposure"], marker="o", color=ATRIA_PURPLE)
         plt.xlabel("Cosecha")
         plt.ylabel("Monto Fondeado")
