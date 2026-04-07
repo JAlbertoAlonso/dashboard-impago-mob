@@ -1450,24 +1450,17 @@ mob_max_line_ui = st.sidebar.slider(
 
 # --------------------------------------------------
 # Totales del escenario en sidebar
+# Universo = solo filtros del escenario + lógica de fraude
+# NO debe depender del tipo de mora seleccionado
 # --------------------------------------------------
 df_sidebar_count = engine.apply_filters(df, filters).copy()
 df_sidebar_count = engine.apply_castigo_filter(df_sidebar_count)
 
-tipo_mora_sidebar = tipo_mora  # usa la mora seleccionada actualmente en sidebar
-
 # Normalización defensiva
-if tipo_mora_sidebar in df_sidebar_count.columns:
-    df_sidebar_count[tipo_mora_sidebar] = pd.to_numeric(
-        df_sidebar_count[tipo_mora_sidebar], errors="coerce"
-    ).fillna(0)
-else:
-    df_sidebar_count[tipo_mora_sidebar] = 0
-
 if "Saldo Capital" in df_sidebar_count.columns:
     df_sidebar_count["Saldo Capital"] = pd.to_numeric(
         df_sidebar_count["Saldo Capital"], errors="coerce"
-    ).fillna(0)
+    ).fillna(0.0)
 else:
     df_sidebar_count["Saldo Capital"] = 0.0
 
@@ -1479,26 +1472,23 @@ else:
     df_sidebar_count["MOB"] = np.nan
 
 # --------------------------------------------------
-# Folios contemplados = folios únicos que sí tienen mora > 0
-# bajo los filtros del escenario
+# Folios contemplados = folios únicos del escenario filtrado
+# sin depender del tipo de mora
 # --------------------------------------------------
-df_sidebar_mora = df_sidebar_count.loc[
-    df_sidebar_count[tipo_mora_sidebar] > 0
-].copy()
-
 total_folios_escenario = (
-    df_sidebar_mora["folio"].nunique()
-    if "folio" in df_sidebar_mora.columns and not df_sidebar_mora.empty
+    df_sidebar_count["folio"].nunique()
+    if "folio" in df_sidebar_count.columns and not df_sidebar_count.empty
     else 0
 )
 
 # --------------------------------------------------
 # Saldo Capital contemplado = un solo registro por folio
-# usando el ÚLTIMO MOB observado con esa mora
+# usando el ÚLTIMO MOB observado dentro del escenario filtrado
+# sin depender del tipo de mora
 # --------------------------------------------------
-if {"folio", "Saldo Capital", "MOB"}.issubset(df_sidebar_mora.columns) and not df_sidebar_mora.empty:
+if {"folio", "Saldo Capital", "MOB"}.issubset(df_sidebar_count.columns) and not df_sidebar_count.empty:
     saldo_por_folio = (
-        df_sidebar_mora[["folio", "MOB", "Saldo Capital"]]
+        df_sidebar_count[["folio", "MOB", "Saldo Capital"]]
         .copy()
         .sort_values(["folio", "MOB"])
         .drop_duplicates(subset=["folio"], keep="last")
